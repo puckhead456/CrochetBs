@@ -1,6 +1,6 @@
-# Stitchkeeper
+# Thready or Not
 
-Stitchkeeper is a row & stitch counter for crochet projects — track rows/rounds,
+Thready or Not is a row & stitch counter for crochet projects — track rows/rounds,
 stitches, repeats, pattern text, assembly checklists, and progress across
 multiple parts of a project. It's an installable web app (PWA) that works
 offline, with six built-in themes.

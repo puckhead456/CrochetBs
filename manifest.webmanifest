@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Stitchkeeper",
-  "short_name": "Stitchkeeper",
+  "name": "Thready or Not",
+  "short_name": "Thready or Not",
   "description": "Row & stitch counter for crochet projects",
   "start_url": "./",
   "scope": "./",

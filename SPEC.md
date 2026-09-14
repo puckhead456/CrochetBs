@@ -1,4 +1,6 @@
-# Stitchkeeper (CrochetBs) — Technical Spec
+# Thready or Not (CrochetBs) — Technical Spec
+
+(App was called "Stitchkeeper" during the initial build; the localStorage key `stitchkeeper.v1` and cache names keep that name on purpose so existing saved projects survive the rename.)
 
 A crochet row/round + stitch counter PWA. Plain HTML/CSS/JS, **no build step, no ES modules, no frameworks**.
 Hosted on GitHub Pages at `https://puckhead456.github.io/CrochetBs/` (so all paths must be **relative**: `./css/app.css`, never `/css/app.css`).

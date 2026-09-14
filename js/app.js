@@ -1959,7 +1959,7 @@
 
   function backupFilename() {
     var d = new Date();
-    return 'stitchkeeper-backup-' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + '.json';
+    return 'thready-or-not-backup-' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + '.json';
   }
 
   function backupBlob() {
@@ -2002,7 +2002,7 @@
   function shareBackup() {
     try {
       var file = new File([backupBlob()], backupFilename(), { type: 'application/json' });
-      navigator.share({ files: [file], title: 'Stitchkeeper backup' }).catch(noop);
+      navigator.share({ files: [file], title: 'Thready or Not backup' }).catch(noop);
     } catch (e) {
       exportBackup();
     }
@@ -2164,7 +2164,7 @@
         /* ---- About ---- */
         var about = el('div', 'field');
         about.appendChild(el('div', 'field-label', 'About'));
-        about.appendChild(el('p', 'muted', 'Stitchkeeper v' + APP_VERSION + ' · everything stays on this device.'));
+        about.appendChild(el('p', 'muted', 'Thready or Not v' + APP_VERSION + ' · everything stays on this device.'));
         body.appendChild(about);
       }
     });
