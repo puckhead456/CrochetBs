@@ -139,12 +139,13 @@ function renderSections(title, text) {
 
 // ---------------------------------------------------------------- run
 
-Promise.all([
-  fetch('../tmp-pdf/bee.txt').then(function (r) { return r.text(); }),
-  fetch('../tmp-pdf/cardigan.txt').then(function (r) { return r.text(); })
-]).then(function (res) {
+function get(name) {
+  return fetch('../tmp-pdf/' + name).then(function (r) { return r.text(); });
+}
+
+Promise.all([get('bee.txt'), get('cardigan.txt'), get('bear.txt'), get('cato.txt')]).then(function (res) {
   out.textContent = '';
-  try { run(res[0], res[1]); } catch (e) {
+  try { run(res[0], res[1]); runBear(res[2]); runCato(res[3]); consistency(res[2], res[3]); } catch (e) {
     log(false, 'fixture run threw: ' + (e && e.stack ? e.stack : e));
   }
   if (uncomputed.length) {
@@ -161,6 +162,132 @@ Promise.all([
   document.getElementById('summary').textContent = '0 passed, 1 failed';
   document.getElementById('summary').className = 'bad';
 });
+
+// strip the "=== PAGE n ===" scaffolding lines the fixture files carry
+function clean(text) {
+  return text.split(/\r\n|\r|\n/).filter(function (l) { return !/^===/.test(l.trim()); }).join('\n');
+}
+function secShape(secs) {
+  return secs.map(function (s) {
+    return s.name + '/' + s.makeCount + '/' + P.summary(P.parse(s.text)).rows;
+  });
+}
+function rowCounts(sec, rows) {
+  var ls = P.parse(sec.text);
+  return rows.map(function (r) { return countOf(ls, r); });
+}
+
+function runBear(bearRaw) {
+  var bear = clean(bearRaw);
+  var secs = renderSections('BEAR (tmp-pdf/bear.txt)', bear);
+  eq(secShape(secs), ['Head/1/13', 'Body/1/10', 'First Leg/1/5', 'Second Leg/1/1', 'Arms/2/6', 'Ears/2/3'],
+    'bear: sections name/makeCount/rows');
+  eq(names(secs).indexOf('Legs'), -1, 'bear: the rowless "Legs" header is dropped');
+
+  var head = sectionNamed(secs, 'Head');
+  if (head) {
+    var h = P.parse(head.text);
+    eq([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(function (r) { return countOf(h, r); }),
+      [8, 16, 24, 30, 30, 30, 30, 30, 30, 24, 18, 12, 6], 'bear Head: counts for rows 1-13');
+    var h4 = rowOf(h, 4);
+    log(!!h4 && h4.countSource === 'explicit' && h4.text.indexOf('A (Sc 1) , Inc, (Sc 3, Inc) x 2') >= 0,
+      'bear Head row 4: the wrapped continuation line is merged in', h4 ? h4.text.slice(0, 60) : '');
+    log(!!h4 && h4.text.indexOf('PHOTO') < 0, 'bear Head row 4: "(PHOTO A)" is stripped from the text');
+    var h12 = rowOf(h, 12);
+    log(!!h12 && h12.notes.join(' ').indexOf('Fasten off Almond') >= 0, 'bear Head row 12: "Fasten off Almond" captured as a note', h12 ? JSON.stringify(h12.notes) : '');
+  } else { log(false, 'bear Head found'); }
+
+  var body = sectionNamed(secs, 'Body');
+  if (body) {
+    eq(rowCounts(body, [1, 2, 3, 8, 9, 10]), [18, 36, 40, 36, 30, 24], 'bear Body: rows 1,2,3,8,9,10 (8 and 9 take a wrapped "(36)"/"(30)" line)');
+  } else { log(false, 'bear Body found'); }
+
+  var leg = sectionNamed(secs, 'First Leg');
+  if (leg) {
+    var lg = P.parse(leg.text);
+    eq([1, 2, 3, 4, 5].map(function (r) { return countOf(lg, r); }), [16, 24, 24, 12, 6], 'bear First Leg: counts 16,24,24,12,6');
+    log(rowOf(lg, 1).notes.join(' ').indexOf('Fasten off Twilight') >= 0, 'bear First Leg row 1: "Fasten off Twilight" note');
+  } else { log(false, 'bear First Leg found'); }
+
+  var arms = sectionNamed(secs, 'Arms');
+  var ears = sectionNamed(secs, 'Ears');
+  if (arms && ears) {
+    var a = P.parse(arms.text);
+    eq(a.filter(function (l) { return l.kind === 'row'; }).map(function (l) { return l.row + '-' + l.rowEnd + '=' + l.count; }),
+      ['1-1=6', '2-2=9', '3-4=9', '5-5=8', '6-6=6'], 'bear Arms (left column): rows 1,2,3-4,5,6 = 6,9,9,8,6');
+    var e = P.parse(ears.text);
+    eq(e.filter(function (l) { return l.kind === 'row'; }).map(function (l) { return l.row + '=' + l.count; }),
+      ['1=5', '2=8', '3=12'], 'bear Ears (right column): rows 1,2,3 = 5,8,12');
+    eq([arms.makeCount, ears.makeCount], [2, 2], 'bear: both make 2');
+  } else { log(false, 'bear Arms/Ears found'); }
+
+  // photo-label lines never become sections or notes
+  var all = P.parse(bear);
+  var lbl = lineWith(all, 'I J K');
+  eq(lbl ? lbl.kind : null, 'note', 'bear: the "I J K" photo-label line is a note');
+  log(all.every(function (l) { return l.notes.join(' ').indexOf('I J K') < 0; }), 'bear: photo labels are attached to nothing');
+}
+
+function runCato(catoRaw) {
+  var cato = clean(catoRaw);
+  var secs = renderSections('CATO (tmp-pdf/cato.txt)', cato);
+  eq(secShape(secs), ['Head/1/18', 'Ears/2/11', 'Horns/2/8', 'Tail & Body/1/37', 'Arms/2/17', 'Feet/2/6', 'Wings/2/7'],
+    'cato: sections name/makeCount/rows');
+  eq(names(secs).indexOf('Tail Frill'), -1, 'cato: "Tail Frill" does not start a section');
+
+  var head = sectionNamed(secs, 'Head');
+  if (head) {
+    var h = P.parse(head.text);
+    eq([1, 2, 3, 4, 7, 10, 13, 17, 18].map(function (r) { return countOf(h, r); }), [6, 12, 18, 24, 30, 42, 36, 18, 9], 'cato Head: sample row counts');
+    var r56 = rowOf(h, 6);
+    eq(r56 ? [r56.row, r56.rowEnd, r56.count] : null, [5, 6, 24], 'cato Head "5-6. Sc around - (24) (2 rounds total)" is a range of 24');
+    log(rowOf(h, 1).notes.join(' ').indexOf('In Color A') >= 0, 'cato Head row 1: "In Color A" attaches', JSON.stringify(rowOf(h, 1).notes));
+    log(rowOf(h, 10).notes.join(' ').indexOf('Before starting round 10') >= 0, 'cato Head row 10: the "Before starting round 10 ..." paragraph attaches', JSON.stringify(rowOf(h, 10).notes));
+  } else { log(false, 'cato Head found'); }
+
+  var tail = sectionNamed(secs, 'Tail & Body');
+  if (tail) {
+    var t = P.parse(tail.text);
+    eq([1, 3, 13, 24, 30, 32, 34, 37].map(function (r) { return countOf(t, r); }), [5, 10, 18, 48, 24, 24, 18, 18], 'cato Tail & Body: sample counts incl. rows 31-33 after the stray header');
+    eq(P.summary(t).maxRow, 37, 'cato Tail & Body: 37 rounds');
+  } else { log(false, 'cato Tail & Body found'); }
+
+  var arms = sectionNamed(secs, 'Arms');
+  if (arms) {
+    eq(rowCounts(arms, [1, 4, 6, 9, 15, 16]), [6, 18, 15, 12, 9, 9], 'cato Arms: sample counts (row 4 has "(Bbl, Slst)x5")');
+  } else { log(false, 'cato Arms found'); }
+
+  var feet = sectionNamed(secs, 'Feet');
+  if (feet) {
+    eq(rowCounts(feet, [1, 2, 5, 6]), [6, 12, 13, 13], 'cato Feet: the header bleeding into Arms row 17 still names this section');
+  } else { log(false, 'cato Feet found'); }
+
+  var wings = sectionNamed(secs, 'Wings');
+  if (wings) {
+    eq(rowCounts(wings, [1, 2, 3, 5, 6, 7]), [8, 14, 13, 22, 21, 60], 'cato Wings: Mr8 / 11HdcInc / 3Hdc in each stitch');
+  } else { log(false, 'cato Wings found'); }
+}
+
+// Every row that has BOTH an explicit and a computed count should agree.
+function consistency() {
+  var texts = Array.prototype.slice.call(arguments).map(clean);
+  var total = 0, agree = 0, bad = [];
+  texts.forEach(function (txt) {
+    P.splitSections(txt).forEach(function (s) {
+      P.parse(s.text).forEach(function (l) {
+        if ((l.kind !== 'row' && l.kind !== 'setup') || l.stitches === null || l.computed === null) return;
+        total++;
+        if (l.stitches === l.computed) agree++;
+        else bad.push(s.name + ' row ' + l.row + ': explicit ' + l.stitches + ' vs computed ' + l.computed + ' - ' + l.text.trim().slice(0, 80));
+      });
+    });
+  });
+  var pct = total ? Math.round(agree / total * 1000) / 10 : 0;
+  h('h2', 'Explicit vs computed consistency (bear + cato)');
+  h('div', agree + ' / ' + total + ' rows agree (' + pct + '%)', 'note');
+  bad.forEach(function (b) { out.appendChild(el('div', 'warn', b)); });
+  log(pct >= 90, 'consistency: computed counts agree with printed counts on at least 90% of rows', pct + '% of ' + total);
+}
 
 function run(bee, cardigan) {
 

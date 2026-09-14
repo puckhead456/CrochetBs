@@ -518,6 +518,113 @@ var foundation = P.parse('First Section\nFoundation Single Crochet 184 (208, 224
 assertEqual(pick(foundation[1], ['kind', 'row', 'count']), { kind: 'setup', row: 0, count: 184 }, 'a counted line before row 1 -> kind setup, row 0');
 assertEqual(pick(rowOf(foundation, 1), ['count', 'countSource']), { count: 184, countSource: 'computed' }, 'row 1 fills from the setup count');
 
+// =======================================================================
+// v2.1: messy two-column PDFs (synthetic snippets in the same shapes)
+// =======================================================================
+
+// -----------------------------------------------------------------------
+group('v2.1: explicit count anywhere after the instruction');
+// -----------------------------------------------------------------------
+
+assertEqual(P.parse('Rnd 4: (Sc 1, Inc) x 6 (30) (PHOTO A)')[0].stitches, 30, 'count before a "(PHOTO A)" tail');
+assertEqual(P.parse('Rnd 4: (Sc 1, Inc) x 6 (30) (PHOTO A)')[0].text.indexOf('PHOTO'), -1, '"(PHOTO A)" is stripped from the line text');
+assertEqual(P.parse('Rnd 3: Hdc around (9) (2 Rounds x 9 Hdc = 18 Hdc)')[0].stitches, 9, 'count before a "(2 Rounds x ...)" tail');
+assertEqual(P.parse('Rnd 5: Sc around - (24) (2 rounds total)')[0].stitches, 24, '"- (24)" dash form, "(2 rounds total)" ignored');
+assertEqual(P.parse('Rnd 17: (2sc, Dec)x6 - (18) touching round 6. If your eyes')[0].stitches, 18, 'count with column bleed after it');
+assertEqual(P.parse('Rnd 1: A (Sc Inc x 8) (16) Fasten off Twilight')[0].stitches, 16, 'an instruction bracket is never the count');
+var foRow = P.parse('Rnd 12: Dec x 6 (12) Fasten off Almond .')[0];
+assertEqual(foRow.stitches, 12, 'count before a "Fasten off" tail');
+assertEqual(foRow.notes, ['Fasten off Almond.'], 'the "Fasten off" tail becomes a note on that row');
+assertEqual(P.parse('Rnd 6: Sc around (30 sts total)')[0].stitches, 30, 'unit words inside the bracket still parse');
+
+// -----------------------------------------------------------------------
+group('v2.1: wrapped rows');
+// -----------------------------------------------------------------------
+
+var wrap = P.parse(
+  'Head\n' +
+  '1. 8 Sc into Magic Ring (8)\n' +
+  '2. (Sc 3, Inc) x 2, Sc 1 , A (Sc 1) , Sc 1, Inc, Sc 2 ,\n' +
+  'A (Sc 1) , Inc, (Sc 3, Inc) x 2 (30)\n' +
+  '3. Hdc 3 , A (Hdc 4, Hdc Dec, Hdc 5) , Hdc 3, Hdc Dec, (Hdc 8, Hdc Dec) x 2, Hdc 1\n' +
+  '(36)');
+assertEqual(pick(rowOf(wrap, 2), ['stitches', 'countSource', 'computed']), { stitches: 30, countSource: 'explicit', computed: 30 }, 'a row ending in "," merges the next line and takes its count');
+assertTrue(rowOf(wrap, 2).text.indexOf('A (Sc 1) , Inc, (Sc 3, Inc) x 2') >= 0, 'the continuation text is merged into the row');
+assertEqual(rowOf(wrap, 3).stitches, 36, 'a lone "(36)" line is a continuation of the row above');
+assertEqual(P.summary(wrap).rows, 3, 'merged continuations do not become extra rows');
+var noWrap = P.parse('1. Inc in each st\nclearly, but I just look at the bee\n2. Sc in each st');
+assertEqual(P.summary(noWrap).rows, 2, 'prose after a row is NOT merged as a continuation');
+assertEqual(noWrap[1].kind, 'note', 'prose after a row stays a note');
+
+// -----------------------------------------------------------------------
+group('v2.1: two columns - labels, header letters, split rows');
+// -----------------------------------------------------------------------
+
+var photo = P.parse('Head\n1. 6 sc in magic ring (6)\nI J K\n2. Inc x 6 (12)\n(PHOTO C)');
+assertEqual(P.summary(photo).sections.map(function (s) { return s.name; }), ['Head'], 'photo-label lines do not become sections');
+assertEqual(photo[2].kind, 'note', '"I J K" is a note, not a header');
+assertEqual(photo[4].text.trim(), '', '"(PHOTO C)" is stripped out of the text');
+assertTrue(photo.every(function (l) { return l.notes.indexOf('I J K') < 0; }), '"I J K" is not attached to any row');
+assertEqual(P.splitSections('Legs G\n1. 8 sc in magic ring (8)\n2. Inc x 8 (16)')[0].name, 'Legs', 'a trailing column letter is stripped from a header ("Legs G")');
+
+var twoCol = P.splitSections(
+  'Arms (Make 2)\n' +
+  'Ears (Make 2)\n' +
+  'In Twilight :\n' +
+  '1. 6 Hdc into Magic Ring (6)\n' +
+  '2. (Hdc 1, Hdc Inc) x 3 (9) 1. 5 Sc in Magic Ring (5)\n' +
+  '3. Hdc 7, Hdc Dec (8) 2. Sc 2, Inc x 3 (8)');
+assertEqual(twoCol.map(function (s) { return s.name + '/' + s.makeCount; }), ['Arms/2', 'Ears/2'], 'two interleaved columns split into Arms x2 and Ears x2');
+assertEqual(P.parse(twoCol[0].text).filter(function (l) { return l.kind === 'row'; }).map(function (l) { return l.count; }), [6, 9, 8], 'left column rows keep their counts');
+assertEqual(P.parse(twoCol[1].text).filter(function (l) { return l.kind === 'row'; }).map(function (l) { return l.count; }), [5, 8], 'right column rows keep their counts');
+
+var tailFrill = P.parse(
+  'Tail\n1. Mr5 - (5)\n2. Sc around - (5)\nTail Frill\n3-4. Sc around - (5)\n5. (Sc, Inc)x5 - (15)');
+assertEqual(P.summary(tailFrill).sections.map(function (s) { return s.name + '/' + s.rows; }), ['Tail/5'], 'a header between consecutive rows does NOT start a section');
+assertEqual(rowOf(tailFrill, 4).count, 5, 'rows continue through the stray header');
+
+// -----------------------------------------------------------------------
+group('v2.1: note paragraphs');
+// -----------------------------------------------------------------------
+
+var paras = P.parse(
+  'Head\n' +
+  'In Color A\n' +
+  '1. Mr6 - (6)\n' +
+  'Before starting round 2 make sure you\n' +
+  'are at the bottom center of the head.\n' +
+  '2. Incx6 - (12)');
+assertEqual(rowOf(paras, 1).notes, ['In Color A'], '"In Color A" attaches to row 1');
+assertEqual(rowOf(paras, 2).notes, ['Before starting round 2 make sure you are at the bottom center of the head.'], 'a connector word ("you") merges the next line into one note paragraph');
+var loose = P.parse('1. 5sc in mr\nSometimes it takes a bit of guess\nwork if you cant see your stitches\n2. Inc in each st');
+assertEqual(rowOf(loose, 1).notes, [], 'commentary that starts with no keyword stays loose');
+
+// -----------------------------------------------------------------------
+group('v2.1: evaluate vocabulary');
+// -----------------------------------------------------------------------
+
+assertEqual(P.evaluate('Mr6', null), 6, 'Mr6 -> 6');
+assertEqual(P.evaluate('Mr 8, Ch 1 and turn work', null), 8, 'Mr 8 with trailing turn -> 8');
+assertEqual(P.evaluate('Increase around', 5), 10, 'Increase around -> prev x2');
+assertEqual(P.evaluate('Decx9', 18), 9, 'Decx9 -> 9');
+assertEqual(P.evaluate('Inc x 8', 8), 16, 'Inc x 8 -> 16');
+assertEqual(P.evaluate('Incx5', 5), 10, 'Incx5 -> 10');
+assertEqual(P.evaluate('11HdcInc', 12), 22, '11HdcInc -> 22');
+assertEqual(P.evaluate('A (Hdc Inc x 5) , Hdc Inc x 13', 18), 36, 'colour prefix + "Hdc Inc x N"');
+assertEqual(P.evaluate('Into head: A (Sc 5) , Sc 13', null), 18, '"Into head: A (Sc 5) , Sc 13" -> 18');
+assertEqual(P.evaluate('S (Dec x 12)', 24), 12, 'S (Dec x 12) -> 12');
+assertEqual(P.evaluate('Hdc 7, Hdc Dec', 9), 8, 'Hdc 7, Hdc Dec -> 8');
+assertEqual(P.evaluate('(Hdc 2, Hdc Dec) x 2', 8), 6, '(Hdc 2, Hdc Dec) x 2 -> 6');
+assertEqual(P.evaluate('3Hdc in each stitch', 20), 60, '3Hdc in each stitch -> prev x3');
+assertEqual(P.evaluate('Skip 1st stitch, 13Sc, Ch 1 and turn work', 14), 13, 'Skip 1st stitch, 13Sc -> 13');
+assertEqual(P.evaluate('Skip 1st stitch, 3Hdc in each stitch', 21), 60, 'skip consumes one, then 3 hdc in each -> 60');
+assertEqual(P.evaluate('Sc, (Bbl, Slst)x5, 7sc', 18), 18, 'Sc, (Bbl, Slst)x5, 7sc -> 18');
+assertEqual(P.evaluate('Fold in half, sc 4 across to close', 9), 4, 'Fold in half, sc 4 across -> 4');
+assertEqual(P.evaluate('2Sc, (Inc, Sc, Bbl, Inc, 2Sc)x2, Inc, 2Sc, Inc', 18), 24, 'long mixed group -> 24');
+assertEqual(P.evaluate('(2sc, Dec)x4, Dec', 18), 13, '(2sc, Dec)x4, Dec -> 13');
+assertEqual(P.parse('Round 6 if you wish.')[0].row, null, '"Round 6 if you wish." is prose, not a row marker');
+assertEqual(P.parse('Round 6: sc in each st')[0].row, 6, '"Round 6: ..." is still a row marker');
+
 // -----------------------------------------------------------------------
 var summaryEl = document.getElementById('summary');
 var finalLine = passed + ' passed, ' + failed + ' failed';
