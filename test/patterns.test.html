@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Patterns.js tests</title>
+<style>
+  body { font: 14px/1.4 Menlo, Consolas, monospace; background:#111; color:#eee; padding:16px; }
+  .pass { color:#7bd389; }
+  .fail { color:#ff6b6b; background:#2a1414; }
+  .group { margin-top:18px; font-weight:bold; color:#9cf; border-bottom:1px solid #333; padding-bottom:4px; }
+  #summary { margin-top:20px; font-size:18px; font-weight:bold; }
+  #summary.ok { color:#7bd389; }
+  #summary.bad { color:#ff6b6b; }
+  pre { white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Patterns.js test suite</h1>
+<div id="out"></div>
+<div id="summary"></div>
+
+<script src="../js/patterns.js"></script>
+<script>
+'use strict';
+
+var out = document.getElementById('out');
+var passed = 0;
+var failed = 0;
+
+function log(ok, label, detail) {
+  if (ok) { passed++; } else { failed++; }
+  var line = (ok ? 'PASS' : 'FAIL') + ' - ' + label + (detail ? '  (' + detail + ')' : '');
+  var div = document.createElement('div');
+  div.className = ok ? 'pass' : 'fail';
+  div.textContent = line;
+  out.appendChild(div);
+  if (ok) { console.log(line); } else { console.error(line); }
+}
+
+function group(title) {
+  var div = document.createElement('div');
+  div.className = 'group';
+  div.textContent = title;
+  out.appendChild(div);
+  console.log('== ' + title + ' ==');
+}
+
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return a === b;
+  var ak = Object.keys(a), bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (var i = 0; i < ak.length; i++) {
+    var k = ak[i];
+    if (!deepEqual(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+function assertEqual(actual, expected, label) {
+  var ok = deepEqual(actual, expected);
+  log(ok, label, ok ? '' : ('expected ' + JSON.stringify(expected) + ' got ' + JSON.stringify(actual)));
+}
+
+function assertTrue(cond, label) {
+  log(!!cond, label);
+}
+
+// -----------------------------------------------------------------------
+group('Amigurumi pattern (rounds, ranges, counts)');
+// -----------------------------------------------------------------------
+
+var amiText =
+  'Rnd 1: 6 sc in magic ring (6)\n' +
+  'Rnd 2: inc around (12)\n' +
+  'Rnd 3: (sc 1, inc) x6 (18)\n' +
+  'Rnd 4: (sc 2, inc) x6 (24)\n' +
+  'Rnd 5: (sc 3, inc) x6 (30)\n' +
+  'Rnd 6-10: sc around (30)\n' +
+  'Rnd 11: (sc 3, dec) x6 (24)';
+
+var ami = window.Patterns.parse(amiText);
+
+assertEqual(ami.length, 7, 'ami: 7 lines parsed');
+assertEqual({ row: ami[0].row, rowEnd: ami[0].rowEnd, stitches: ami[0].stitches }, { row: 1, rowEnd: 1, stitches: 6 }, 'ami line 0: Rnd 1 (6)');
+assertEqual({ row: ami[1].row, rowEnd: ami[1].rowEnd, stitches: ami[1].stitches }, { row: 2, rowEnd: 2, stitches: 12 }, 'ami line 1: Rnd 2 (12)');
+assertEqual({ row: ami[2].row, rowEnd: ami[2].rowEnd, stitches: ami[2].stitches }, { row: 3, rowEnd: 3, stitches: 18 }, 'ami line 2: Rnd 3, (sc 1, inc) parenthetical ignored, count 18');
+assertEqual({ row: ami[4].row, rowEnd: ami[4].rowEnd, stitches: ami[4].stitches }, { row: 5, rowEnd: 5, stitches: 30 }, 'ami line 4: Rnd 5 (30)');
+assertEqual({ row: ami[5].row, rowEnd: ami[5].rowEnd, stitches: ami[5].stitches }, { row: 6, rowEnd: 10, stitches: 30 }, 'ami line 5: Rnd 6-10 range (30)');
+assertEqual({ row: ami[6].row, rowEnd: ami[6].rowEnd, stitches: ami[6].stitches }, { row: 11, rowEnd: 11, stitches: 24 }, 'ami line 6: Rnd 11, last number in "(sc 3, dec) x6 (24)" is 24');
+assertEqual(ami[0].index, 0, 'ami: index is 0-based');
+assertEqual(ami[0].text, 'Rnd 1: 6 sc in magic ring (6)', 'ami: original text preserved');
+
+assertEqual(window.Patterns.targetFor(ami, 1), 6, 'ami targetFor(1) == 6');
+assertEqual(window.Patterns.targetFor(ami, 8), 30, 'ami targetFor(8) inside 6-10 range == 30');
+assertEqual(window.Patterns.targetFor(ami, 10), 30, 'ami targetFor(10) end of range == 30');
+assertEqual(window.Patterns.targetFor(ami, 11), 24, 'ami targetFor(11) == 24');
+assertEqual(window.Patterns.targetFor(ami, 12), null, 'ami targetFor(12) beyond pattern == null');
+assertEqual(window.Patterns.lineFor(ami, 7).text, 'Rnd 6-10: sc around (30)', 'ami lineFor(7) resolves range line');
+assertEqual(window.Patterns.lineFor(ami, 12), null, 'ami lineFor(12) == null');
+
+var amiSummary = window.Patterns.summary(ami);
+assertEqual(amiSummary, { rows: 11, maxRow: 11, hasTargets: true }, 'ami summary: rows=11 (range counted), maxRow=11, hasTargets=true');
+
+// -----------------------------------------------------------------------
+group('Row-based blanket pattern (no stitch counts)');
+// -----------------------------------------------------------------------
+
+var blanketText =
+  'Row 1: ch 20, sc in 2nd ch from hook and each ch across\n' +
+  'Row 2: ch 1, turn, sc in each st across\n' +
+  'Row 3: ch 1, turn, sc in each st across';
+
+var blanket = window.Patterns.parse(blanketText);
+assertEqual(blanket.map(function (l) { return l.row; }), [1, 2, 3], 'blanket: rows 1,2,3 detected');
+assertTrue(blanket.every(function (l) { return l.stitches === null; }), 'blanket: no stitch counts found on any line');
+
+var blanketSummary = window.Patterns.summary(blanket);
+assertEqual(blanketSummary, { rows: 3, maxRow: 3, hasTargets: false }, 'blanket summary: rows=3, maxRow=3, hasTargets=false');
+assertEqual(window.Patterns.targetFor(blanket, 2), null, 'blanket targetFor(2) == null (row exists but no stitches)');
+assertTrue(window.Patterns.lineFor(blanket, 2) !== null, 'blanket lineFor(2) still resolves the line even without stitches');
+assertEqual(window.Patterns.lineFor(blanket, 2).row, 2, 'blanket lineFor(2).row == 2');
+
+// -----------------------------------------------------------------------
+group('Row marker styles: R12, numbered "12.", = 30, R5/R 5/Rnd5/Round 5');
+// -----------------------------------------------------------------------
+
+var r12 = window.Patterns.parse('R12 - dc in each st around')[0];
+assertEqual({ row: r12.row, rowEnd: r12.rowEnd, stitches: r12.stitches }, { row: 12, rowEnd: 12, stitches: null }, '"R12 - ..." parses as row 12, no trailing count consumed as range');
+
+var numbered = window.Patterns.parse('12. sc in each dc around (24)')[0];
+assertEqual({ row: numbered.row, rowEnd: numbered.rowEnd, stitches: numbered.stitches }, { row: 12, rowEnd: 12, stitches: 24 }, '"12. ..." numbered style with trailing (24)');
+
+var eqLine = window.Patterns.parse('Rnd 8: dc around = 30')[0];
+assertEqual({ row: eqLine.row, stitches: eqLine.stitches }, { row: 8, stitches: 30 }, '"= 30" trailing count style');
+
+assertEqual(window.Patterns.parse('R5')[0].row, 5, '"R5" (no space, no colon) -> row 5');
+assertEqual(window.Patterns.parse('R 5')[0].row, 5, '"R 5" (space) -> row 5');
+assertEqual(window.Patterns.parse('Rnd5')[0].row, 5, '"Rnd5" (no space) -> row 5');
+assertEqual(window.Patterns.parse('Round 5')[0].row, 5, '"Round 5" -> row 5');
+assertEqual(window.Patterns.parse('Row 5:')[0].row, 5, '"Row 5:" -> row 5');
+assertEqual(window.Patterns.parse('5.')[0].row, 5, '"5." bare numbered marker -> row 5');
+assertEqual(window.Patterns.parse('5:')[0].row, 5, '"5:" bare numbered marker -> row 5');
+assertEqual(window.Patterns.parse('5)')[0].row, 5, '"5)" bare numbered marker -> row 5');
+
+// -----------------------------------------------------------------------
+group('En-dash / hyphen / "to" ranges');
+// -----------------------------------------------------------------------
+
+var enDash = window.Patterns.parse('Rnds 6–10: sc around (30)')[0];
+assertEqual({ row: enDash.row, rowEnd: enDash.rowEnd, stitches: enDash.stitches }, { row: 6, rowEnd: 10, stitches: 30 }, 'en-dash range "Rnds 6–10" -> row 6, rowEnd 10');
+
+var hyphenRange = window.Patterns.parse('Rows 5-8: sc across')[0];
+assertEqual({ row: hyphenRange.row, rowEnd: hyphenRange.rowEnd }, { row: 5, rowEnd: 8 }, 'hyphen range "Rows 5-8"');
+
+var toRange = window.Patterns.parse('Rnd 5 to 8: sc around')[0];
+assertEqual({ row: toRange.row, rowEnd: toRange.rowEnd }, { row: 5, rowEnd: 8 }, '"to" word range "Rnd 5 to 8"');
+
+// A bare range with nothing trailing: the range's own end number ("10")
+// must never leak into stitches via the dash-count heuristic.
+var bareRange = window.Patterns.parse('Rnd 6-10')[0];
+assertEqual({ row: bareRange.row, rowEnd: bareRange.rowEnd, stitches: bareRange.stitches }, { row: 6, rowEnd: 10, stitches: null }, 'bare "Rnd 6-10" with no trailing text: rowEnd is NOT mistaken for a stitch count');
+
+// -----------------------------------------------------------------------
+group('Bullet-prefixed markers');
+// -----------------------------------------------------------------------
+
+assertEqual(window.Patterns.parse('- Rnd 5: 2dc in each st (12)')[0].row, 5, 'leading "- " bullet before Rnd marker');
+assertEqual(window.Patterns.parse('- Rnd 5: 2dc in each st (12)')[0].stitches, 12, 'leading "- " bullet, count still parsed');
+assertEqual(window.Patterns.parse('* Row 3: sc around (18 sts)')[0].row, 3, 'leading "*" bullet before Row marker');
+assertEqual(window.Patterns.parse('• R7: sc around (21)')[0].row, 7, 'leading "•" bullet before R marker');
+
+// -----------------------------------------------------------------------
+group('Headers and non-row lines (should NOT be misread as markers)');
+// -----------------------------------------------------------------------
+
+var head = window.Patterns.parse('HEAD:')[0];
+assertEqual({ row: head.row, stitches: head.stitches }, { row: null, stitches: null }, '"HEAD:" section header has no row/stitches');
+
+var wings = window.Patterns.parse('Wings (make 2)')[0];
+assertEqual({ row: wings.row, stitches: wings.stitches }, { row: null, stitches: null }, '"Wings (make 2)" header: parenthetical is not mistaken for a stitch count');
+
+var tricky1 = window.Patterns.parse('5 sc in next st')[0];
+assertEqual({ row: tricky1.row, stitches: tricky1.stitches }, { row: null, stitches: null }, '"5 sc in next st" leading number is NOT a row marker (no . : ) after it)');
+
+var tricky2 = window.Patterns.parse('6 inc around')[0];
+assertEqual({ row: tricky2.row, stitches: tricky2.stitches }, { row: null, stitches: null }, '"6 inc around" leading number is NOT a row marker');
+
+assertEqual(window.Patterns.parse('Repeat rows 1-4 for pattern... continue')[0].row, null, '"Repeat rows..." (keyword not at very start after "Repeat") is not itself treated oddly - "Repeat" prefix has no digit right after "R" so no false match');
+
+// -----------------------------------------------------------------------
+group('Stitch-count formats at end of line');
+// -----------------------------------------------------------------------
+
+function st(line) { return window.Patterns.parse(line)[0].stitches; }
+
+assertEqual(st('Rnd 1: sc around (30)'), 30, 'parens (30)');
+assertEqual(st('Rnd 1: sc around [30]'), 30, 'brackets [30]');
+assertEqual(st('Rnd 1: sc around (30 sts)'), 30, '(30 sts)');
+assertEqual(st('Rnd 1: sc around (30 st)'), 30, '(30 st) singular');
+assertEqual(st('Rnd 1: sc around (30 sc)'), 30, '(30 sc)');
+assertEqual(st('Rnd 1: sc around (30 stitches)'), 30, '(30 stitches)');
+assertEqual(st('Rnd 1: sc around (30 sts total)'), 30, '(30 sts total)');
+assertEqual(st('Rnd 1: sc around = 30'), 30, '= 30');
+assertEqual(st('Rnd 1: sc around – 30 sts'), 30, 'en dash – 30 sts');
+assertEqual(st('Rnd 1: sc around - 30'), 30, 'hyphen - 30');
+assertEqual(st('Rnd 1: sc around 30 sts'), 30, 'plain trailing 30 sts');
+assertEqual(st('Rnd 1: sc around 30 sts.'), 30, 'plain trailing 30 sts. with period');
+assertEqual(st('Rnd 1: dec around (24, 30)'), 30, '(24, 30) takes the LAST number');
+assertEqual(st('Wings (make 2)'), null, '(make 2) is not count-like -> null');
+assertEqual(st('Just a note with no count'), null, 'no trailing count -> null');
+
+// -----------------------------------------------------------------------
+group('targetFor vs lineFor: first-with-stitches vs first-in-range');
+// -----------------------------------------------------------------------
+
+var overlap = window.Patterns.parse('Row 5: something\nRow 5: something else (20)');
+assertEqual(window.Patterns.targetFor(overlap, 5), 20, 'targetFor skips the row-5 line without stitches and uses the one that has a count');
+assertEqual(window.Patterns.lineFor(overlap, 5).text, 'Row 5: something', 'lineFor returns the FIRST line in range regardless of stitches');
+
+// -----------------------------------------------------------------------
+group('Line endings (CRLF/CR/LF) and blank lines');
+// -----------------------------------------------------------------------
+
+var crlfText = 'Rnd 1: sc around (6)\r\nRnd 2: inc around (12)\r\n';
+var crlf = window.Patterns.parse(crlfText);
+assertEqual(crlf.length, 3, 'CRLF text splits into 3 lines (incl. trailing blank from final \\r\\n)');
+assertEqual(crlf[0].row, 1, 'CRLF line 0 row parsed correctly (no stray \\r)');
+assertEqual(crlf[1].stitches, 12, 'CRLF line 1 stitches parsed correctly');
+assertEqual(crlf[2].text, '', 'CRLF trailing blank line has empty text');
+assertEqual(crlf[2].row, null, 'CRLF trailing blank line has null row');
+
+var blankMiddle = window.Patterns.parse('Rnd 1: sc (6)\n\nRnd 2: inc (12)');
+assertEqual(blankMiddle.length, 3, 'blank line in the middle preserved as its own Line');
+assertEqual(blankMiddle[1].row, null, 'blank middle line has null row');
+assertEqual(blankMiddle[1].stitches, null, 'blank middle line has null stitches');
+var blankSummary = window.Patterns.summary(blankMiddle);
+assertEqual(blankSummary.rows, 2, 'blank line does not count toward summary.rows');
+
+assertEqual(window.Patterns.parse('').length, 1, 'empty string parses to a single blank Line');
+assertEqual(window.Patterns.parse(null).length, 0, 'null input -> empty array');
+assertEqual(window.Patterns.parse(undefined).length, 0, 'undefined input -> empty array');
+
+// -----------------------------------------------------------------------
+group('summary() on empty / no-marker input');
+// -----------------------------------------------------------------------
+
+var noMarkers = window.Patterns.parse('Just some notes\nMore notes, no rows here');
+assertEqual(window.Patterns.summary(noMarkers), { rows: 0, maxRow: null, hasTargets: false }, 'summary with no row markers at all: rows=0, maxRow=null, hasTargets=false');
+assertEqual(window.Patterns.summary([]), { rows: 0, maxRow: null, hasTargets: false }, 'summary of empty array');
+assertEqual(window.Patterns.targetFor([], 1), null, 'targetFor on empty array -> null');
+assertEqual(window.Patterns.lineFor([], 1), null, 'lineFor on empty array -> null');
+
+// -----------------------------------------------------------------------
+var summaryEl = document.getElementById('summary');
+var finalLine = passed + ' passed, ' + failed + ' failed';
+summaryEl.textContent = finalLine;
+summaryEl.className = failed === 0 ? 'ok' : 'bad';
+console.log(finalLine);
+</script>
+</body>
+</html>

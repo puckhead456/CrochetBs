@@ -1,0 +1,250 @@
+/* ==========================================================================
+   Stitchkeeper — Themes
+   Defines every CSS variable from the SPEC "Themes contract" for all 6
+   themes. css/app.css consumes ONLY these variables (plus its own layout
+   numbers). :root mirrors html[data-theme="stardew-spring"] as the default.
+   ========================================================================== */
+
+:root {
+  --bg: #fff8ed;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cg fill='%237cb88f' fill-opacity='0.15'%3E%3Cellipse cx='15' cy='15' rx='7' ry='4' transform='rotate(45 15 15)'/%3E%3Cellipse cx='45' cy='40' rx='7' ry='4' transform='rotate(45 45 40)'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #ffffff;
+  --surface-2: #fdf1dd;
+  --text: #4a3728;
+  --text-muted: #8a7660;
+  --border: #e8d9c0;
+  --primary: #4f9868;
+  --primary-text: #ffffff;
+  --primary-glow: rgba(79, 152, 104, 0.5);
+  --accent: #f4a46b;
+  --accent-text: #4a3728;
+  --accent-2: #e6a23c;
+  --danger: #d96c6c;
+  --success: #4f9868;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --shadow: 0 4px 14px rgba(120, 90, 40, 0.14);
+  --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Fredoka', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 96px;
+  --tap-border: 4px solid rgba(255, 255, 255, 0.8);
+  --header-bg: linear-gradient(135deg, #fff3dc, #dcefd9);
+  --header-text: #4a3728;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cellipse cx='32' cy='38' rx='22' ry='20' fill='%237cb88f'/%3E%3Cpath d='M18 20 Q32 2 46 20 Q32 14 18 20Z' fill='%234f9868'/%3E%3Ccircle cx='24' cy='36' r='8' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='36' r='8' fill='%23ffffff'/%3E%3Ccircle cx='25' cy='38' r='3.5' fill='%232b2b2b'/%3E%3Ccircle cx='41' cy='38' r='3.5' fill='%232b2b2b'/%3E%3Cpath d='M27 48 Q32 52 37 48' stroke='%232b2b2b' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  --overlay: rgba(74, 55, 40, 0.35);
+  --color-scheme: light;
+}
+
+/* --------------------------------------------------------------------------
+   Stardew group
+   -------------------------------------------------------------------------- */
+
+/* Pelican Town Spring — cream/soft greens/peach, junimo mascot, light, cozy */
+html[data-theme="stardew-spring"] {
+  --bg: #fff8ed;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cg fill='%237cb88f' fill-opacity='0.15'%3E%3Cellipse cx='15' cy='15' rx='7' ry='4' transform='rotate(45 15 15)'/%3E%3Cellipse cx='45' cy='40' rx='7' ry='4' transform='rotate(45 45 40)'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #ffffff;
+  --surface-2: #fdf1dd;
+  --text: #4a3728;
+  --text-muted: #8a7660;
+  --border: #e8d9c0;
+  --primary: #4f9868;
+  --primary-text: #ffffff;
+  --primary-glow: rgba(79, 152, 104, 0.5);
+  --accent: #f4a46b;
+  --accent-text: #4a3728;
+  --accent-2: #e6a23c;
+  --danger: #d96c6c;
+  --success: #4f9868;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --shadow: 0 4px 14px rgba(120, 90, 40, 0.14);
+  --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Fredoka', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 96px;
+  --tap-border: 4px solid rgba(255, 255, 255, 0.8);
+  --header-bg: linear-gradient(135deg, #fff3dc, #dcefd9);
+  --header-text: #4a3728;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cellipse cx='32' cy='38' rx='22' ry='20' fill='%237cb88f'/%3E%3Cpath d='M18 20 Q32 2 46 20 Q32 14 18 20Z' fill='%234f9868'/%3E%3Ccircle cx='24' cy='36' r='8' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='36' r='8' fill='%23ffffff'/%3E%3Ccircle cx='25' cy='38' r='3.5' fill='%232b2b2b'/%3E%3Ccircle cx='41' cy='38' r='3.5' fill='%232b2b2b'/%3E%3Cpath d='M27 48 Q32 52 37 48' stroke='%232b2b2b' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  --overlay: rgba(74, 55, 40, 0.35);
+  --color-scheme: light;
+}
+
+/* Stardrop Night — deep navy/purple, stars, stardrop mascot, dark */
+html[data-theme="stardew-night"] {
+  --bg: #10122b;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='50' height='50' viewBox='0 0 50 50'%3E%3Cg fill='%23ffffff' fill-opacity='0.14'%3E%3Ccircle cx='8' cy='10' r='1.4'/%3E%3Ccircle cx='30' cy='6' r='1'/%3E%3Ccircle cx='40' cy='30' r='1.6'/%3E%3Ccircle cx='15' cy='36' r='1'/%3E%3Ccircle cx='45' cy='44' r='1.2'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #1b1e42;
+  --surface-2: #262a57;
+  --text: #edeafb;
+  --text-muted: #a9a6d6;
+  --border: #363b6e;
+  --primary: #8b6fe0;
+  --primary-text: #ffffff;
+  --primary-glow: rgba(139, 111, 224, 0.6);
+  --accent: #4fd1e8;
+  --accent-text: #0b1030;
+  --accent-2: #f4cb63;
+  --danger: #e9707a;
+  --success: #7bd9a0;
+  --radius: 18px;
+  --radius-sm: 10px;
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Fredoka', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 96px;
+  --tap-border: 3px solid rgba(255, 255, 255, 0.18);
+  --header-bg: linear-gradient(135deg, #1b1e42, #2e2a63);
+  --header-text: #edeafb;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 6C40 20 50 28 50 40a18 18 0 0 1-36 0C14 28 24 20 32 6Z' fill='%238b6fe0'/%3E%3Cellipse cx='26' cy='40' rx='5' ry='8' fill='%23c9b8fa' fill-opacity='0.6'/%3E%3Ccircle cx='46' cy='14' r='2.5' fill='%23f4cb63'/%3E%3Ccircle cx='14' cy='24' r='1.8' fill='%23f4cb63'/%3E%3Cpath d='M32 46 q4 4 0 8 q-4 -4 0 -8Z' fill='%23ffffff' fill-opacity='0.5'/%3E%3C/svg%3E");
+  --overlay: rgba(6, 8, 20, 0.55);
+  --color-scheme: dark;
+}
+
+/* Harvest Festival — pumpkin orange/mustard/barn red/wood brown, light */
+html[data-theme="stardew-harvest"] {
+  --bg: #fbf0dd;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='%23c98a2c' fill-opacity='0.16'%3E%3Cellipse cx='14' cy='14' rx='6' ry='3.5' transform='rotate(30 14 14)'/%3E%3Cellipse cx='42' cy='38' rx='6' ry='3.5' transform='rotate(30 42 38)'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #ffffff;
+  --surface-2: #f7e3c4;
+  --text: #4a2e1d;
+  --text-muted: #8c6a4e;
+  --border: #e8c89a;
+  --primary: #d9622b;
+  --primary-text: #ffffff;
+  --primary-glow: rgba(217, 98, 43, 0.5);
+  --accent: #e0a526;
+  --accent-text: #4a2e1d;
+  --accent-2: #8b3a2b;
+  --danger: #b23b3b;
+  --success: #4f8a52;
+  --radius: 16px;
+  --radius-sm: 9px;
+  --shadow: 0 4px 14px rgba(120, 60, 20, 0.18);
+  --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Fredoka', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 94px;
+  --tap-border: 4px solid rgba(255, 255, 255, 0.7);
+  --header-bg: linear-gradient(135deg, #f3c775, #d9622b);
+  --header-text: #fff8ed;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cellipse cx='32' cy='38' rx='24' ry='18' fill='%23d9622b'/%3E%3Cpath d='M24 22a18 18 0 0 1 0 32M32 20a18 18 0 0 1 0 36M40 22a18 18 0 0 1 0 32' stroke='%23b8501f' stroke-width='1.5' fill='none'/%3E%3Crect x='29' y='6' width='6' height='12' rx='2' fill='%235b7a3a'/%3E%3Cpath d='M35 10 Q46 6 44 16 Q38 16 35 12Z' fill='%237cb88f'/%3E%3C/svg%3E");
+  --overlay: rgba(74, 46, 29, 0.4);
+  --color-scheme: light;
+}
+
+/* --------------------------------------------------------------------------
+   Dragon group
+   -------------------------------------------------------------------------- */
+
+/* Night Fury — HTTYD Toothless: charcoal, toothless-green, plasma-blue glow, dark */
+html[data-theme="dragon-fury"] {
+  --bg: #14181a;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='%234fc4ff' fill-opacity='0.1'%3E%3Ccircle cx='10' cy='12' r='3'/%3E%3Ccircle cx='40' cy='30' r='4'/%3E%3Ccircle cx='26' cy='46' r='2.5'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #1e2426;
+  --surface-2: #262e30;
+  --text: #eaf3f0;
+  --text-muted: #9fb3ae;
+  --border: #33403f;
+  --primary: #7bd389;
+  --primary-text: #0e1512;
+  --primary-glow: rgba(79, 196, 255, 0.6);
+  --accent: #4fc4ff;
+  --accent-text: #06232e;
+  --accent-2: #9be7a8;
+  --danger: #e9707a;
+  --success: #7bd389;
+  --radius: 20px;
+  --radius-sm: 12px;
+  --shadow: 0 8px 20px rgba(0, 0, 0, 0.5), 0 0 16px rgba(79, 196, 255, 0.22);
+  --font-body: 'Quicksand', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Quicksand', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 96px;
+  --tap-border: 3px solid rgba(79, 196, 255, 0.5);
+  --header-bg: linear-gradient(135deg, #14181a, #1e2c2a);
+  --header-text: #eaf3f0;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M12 26 Q10 14 20 16 Q16 22 18 28Z' fill='%23191d1e'/%3E%3Cpath d='M52 26 Q54 14 44 16 Q48 22 46 28Z' fill='%23191d1e'/%3E%3Cellipse cx='32' cy='36' rx='24' ry='22' fill='%23191d1e'/%3E%3Cellipse cx='23' cy='34' rx='8' ry='9' fill='%237bd389'/%3E%3Cellipse cx='41' cy='34' rx='8' ry='9' fill='%237bd389'/%3E%3Cellipse cx='23' cy='36' rx='2.4' ry='5' fill='%230e1512'/%3E%3Cellipse cx='41' cy='36' rx='2.4' ry='5' fill='%230e1512'/%3E%3Cpath d='M22 50 Q32 56 42 50' stroke='%234fc4ff' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  --overlay: rgba(4, 6, 7, 0.6);
+  --color-scheme: dark;
+}
+
+/* Fire & Blood — GoT/Targaryen: parchment, crimson, black + gold, serif display, light */
+html[data-theme="dragon-throne"] {
+  --bg: #f3e4c4;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='24' viewBox='0 0 48 24'%3E%3Cg fill='none' stroke='%238b1e2b' stroke-opacity='0.14' stroke-width='2'%3E%3Cpath d='M0 24 A12 12 0 0 1 24 24'/%3E%3Cpath d='M24 24 A12 12 0 0 1 48 24'/%3E%3C/g%3E%3C/svg%3E");
+  --surface: #fbf3de;
+  --surface-2: #eedbb0;
+  --text: #2b1712;
+  --text-muted: #6b4a3a;
+  --border: #d8b978;
+  --primary: #8b1e2b;
+  --primary-text: #f8e9c9;
+  --primary-glow: rgba(139, 30, 43, 0.5);
+  --accent: #1a1a1a;
+  --accent-text: #f3e4c4;
+  --accent-2: #c9a227;
+  --danger: #a5303d;
+  --success: #4f7a4a;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --shadow: 0 6px 18px rgba(43, 23, 18, 0.25);
+  --font-body: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Cinzel', Georgia, 'Times New Roman', serif;
+  --counter-size: 92px;
+  --tap-border: 3px solid #c9a227;
+  --header-bg: linear-gradient(135deg, #8b1e2b, #2b1712);
+  --header-text: #f8e9c9;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 12 L50 34 Q52 50 32 56 Q12 50 14 34 Z' fill='%238b1e2b'/%3E%3Cpath d='M22 18 L16 4 L26 14Z' fill='%23c9a227'/%3E%3Cpath d='M42 18 L48 4 L38 14Z' fill='%23c9a227'/%3E%3Ccircle cx='25' cy='32' r='3' fill='%23f8e9c9'/%3E%3Ccircle cx='39' cy='32' r='3' fill='%23f8e9c9'/%3E%3Cpath d='M24 44 Q32 50 40 44' stroke='%23c9a227' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  --overlay: rgba(43, 23, 18, 0.45);
+  --color-scheme: light;
+}
+
+/* Pixel Wyrm — 8-bit: pixel font, hard borders, radius 0, offset shadows, dark */
+html[data-theme="dragon-pixel"] {
+  --bg: #0f0f1e;
+  --bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M0 0H16V16H0Z' fill='none' stroke='%23ffffff' stroke-opacity='0.08'/%3E%3Crect x='0' y='0' width='8' height='8' fill='%23ffffff' fill-opacity='0.04'/%3E%3C/svg%3E");
+  --surface: #1a1a2e;
+  --surface-2: #24243e;
+  --text: #e8e8f0;
+  --text-muted: #8888a8;
+  --border: #000000;
+  --primary: #ff4d6d;
+  --primary-text: #0f0f1e;
+  --primary-glow: rgba(255, 77, 109, 0.6);
+  --accent: #4de8b0;
+  --accent-text: #0f0f1e;
+  --accent-2: #ffd24d;
+  --danger: #ff4d6d;
+  --success: #4de8b0;
+  --radius: 0px;
+  --radius-sm: 0px;
+  --shadow: 4px 4px 0 #000000;
+  --font-body: 'Press Start 2P', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Press Start 2P', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --counter-size: 56px;
+  --tap-border: 4px solid #000000;
+  --header-bg: #1a1a2e;
+  --header-text: #ffd24d;
+  --mascot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' shape-rendering='crispEdges'%3E%3Crect x='24' y='8' width='8' height='8' fill='%230f0f1e'/%3E%3Crect x='32' y='8' width='8' height='8' fill='%230f0f1e'/%3E%3Crect x='16' y='16' width='32' height='8' fill='%234de8b0'/%3E%3Crect x='8' y='24' width='48' height='16' fill='%234de8b0'/%3E%3Crect x='16' y='24' width='8' height='8' fill='%23ffd24d'/%3E%3Crect x='40' y='24' width='8' height='8' fill='%23ffd24d'/%3E%3Crect x='16' y='40' width='32' height='8' fill='%234de8b0'/%3E%3Crect x='24' y='48' width='16' height='8' fill='%234de8b0'/%3E%3Crect x='48' y='32' width='8' height='8' fill='%23ff4d6d'/%3E%3C/svg%3E");
+  --overlay: rgba(0, 0, 0, 0.72);
+  --color-scheme: dark;
+}
+
+/* --------------------------------------------------------------------------
+   Theme-specific touches (tasteful, harmless if unused by app.css)
+   -------------------------------------------------------------------------- */
+
+/* Pixel theme: hard offset shadows on buttons/cards to match the 8-bit look */
+html[data-theme="dragon-pixel"] .btn,
+html[data-theme="dragon-pixel"] .card {
+  box-shadow: var(--shadow);
+}
+
+/* Respect reduced-motion preferences for any theme-driven motion/transitions */
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme] * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

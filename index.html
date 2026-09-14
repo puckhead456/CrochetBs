@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stitchkeeper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A crochet row, round and stitch counter that works offline.">
+<meta name="theme-color" content="#9ccc65">
+<meta name="color-scheme" content="light dark">
+
+<!-- PWA / iOS -->
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stitchkeeper">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<!-- Styles -->
+<link rel="stylesheet" href="./css/app.css">
+<link rel="stylesheet" href="./css/themes.css">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&amp;family=Fredoka:wght@500;700&amp;family=Quicksand:wght@500;700&amp;family=Cinzel:wght@600;700&amp;family=Press+Start+2P&amp;display=swap">
+</head>
+<body>
+
+<!-- Screen-reader announcements (row changes, milestones) -->
+<div id="live-region" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<!-- =============================== HOME =============================== -->
+<section id="screen-home" class="screen" aria-label="Projects">
+  <header class="topbar">
+    <div class="topbar-mascot" aria-hidden="true"></div>
+    <h1 class="topbar-title">Stitchkeeper</h1>
+    <button type="button" id="btn-settings" class="icon-btn" aria-label="Settings">
+      <span aria-hidden="true">⚙️</span>
+    </button>
+  </header>
+
+  <main class="screen-body" id="home-body">
+    <section id="home-empty" class="empty-state" hidden>
+      <div class="empty-mascot" aria-hidden="true"></div>
+      <h2>No projects yet</h2>
+      <p class="muted">Start a blanket, a blobby sheep, or a whole dragon. Stitchkeeper keeps the count.</p>
+      <button type="button" class="btn primary big" data-action="new-project">＋ New project</button>
+    </section>
+
+    <div id="home-list" class="card-list"></div>
+
+    <section id="home-finished" class="shelf" hidden>
+      <button type="button" id="finished-toggle" class="shelf-toggle" aria-expanded="false" aria-controls="finished-list">
+        <span class="shelf-caret" aria-hidden="true">▸</span>
+        <span id="finished-label">Finished shelf</span>
+      </button>
+      <div id="finished-list" class="card-list" hidden></div>
+    </section>
+  </main>
+
+  <button type="button" id="btn-new" class="fab" data-action="new-project" aria-label="New project">
+    <span aria-hidden="true">＋</span> New
+  </button>
+</section>
+
+<!-- ============================== PROJECT ============================= -->
+<section id="screen-project" class="screen" aria-label="Project" hidden>
+  <header class="topbar">
+    <button type="button" id="p-back" class="icon-btn" aria-label="Back to projects">
+      <span aria-hidden="true">‹</span>
+    </button>
+    <button type="button" id="p-title" class="title-btn" aria-label="Edit project">
+      <span id="p-emoji" class="title-emoji" aria-hidden="true">🧶</span>
+      <span id="p-name" class="title-name">Project</span>
+    </button>
+    <button type="button" id="p-timer" class="chip timer-chip" aria-label="Toggle timer">0:00:00</button>
+    <button type="button" id="p-menu" class="icon-btn" aria-label="Project menu">
+      <span aria-hidden="true">⋯</span>
+    </button>
+  </header>
+
+  <main class="screen-body project-body">
+    <div id="part-tabs" class="tabs" role="group" aria-label="Parts"></div>
+
+    <p id="repeat-readout" class="repeat-readout" hidden></p>
+
+    <section class="card counter-card" aria-label="Row counter">
+      <div class="counter-label" id="row-label">ROW</div>
+      <div class="counter-row">
+        <button type="button" id="row-minus" class="round-btn" aria-label="Previous row">
+          <span aria-hidden="true">–</span>
+        </button>
+        <div id="row-number" class="big-number">0</div>
+        <button type="button" id="row-plus" class="round-btn accent" aria-label="Complete row">
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
+      <div id="row-progress" class="progress" hidden>
+        <div class="bar"><div id="row-bar-fill" class="bar-fill"></div></div>
+        <div id="row-bar-label" class="bar-label"></div>
+      </div>
+    </section>
+
+    <button type="button" id="pattern-line" class="pattern-line" hidden>
+      <span class="pattern-line-tag" id="pattern-line-tag"></span>
+      <span class="pattern-line-text" id="pattern-line-text"></span>
+    </button>
+
+    <section class="stitch-section" aria-label="Stitch counter">
+      <button type="button" id="stitch-btn" class="stitch-btn" aria-label="Count a stitch">
+        <span class="stitch-caption">STITCHES</span>
+        <span id="stitch-number" class="stitch-number">0</span>
+        <span class="stitch-hint">tap</span>
+      </button>
+      <div id="stitch-readout" class="readout"></div>
+      <div id="stitch-progress" class="progress slim" hidden>
+        <div class="bar"><div id="stitch-bar-fill" class="bar-fill"></div></div>
+        <div id="stitch-bar-label" class="bar-label"></div>
+      </div>
+      <div class="stitch-actions">
+        <button type="button" id="stitch-minus" class="btn ghost" aria-label="Remove one stitch">–1</button>
+        <button type="button" id="stitch-reset" class="linkish" aria-label="Reset stitches for this row">reset stitches</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottombar" aria-label="Project tools">
+    <button type="button" id="btn-undo" class="bar-btn" aria-label="Undo last action">
+      <span class="bar-icon" aria-hidden="true">↶</span><span class="bar-text">Undo</span>
+    </button>
+    <button type="button" id="btn-wake" class="bar-btn" aria-label="Keep screen awake" aria-pressed="false">
+      <span class="bar-icon" aria-hidden="true">☀</span><span class="bar-text">Awake</span>
+    </button>
+    <button type="button" id="btn-alerts" class="bar-btn" aria-label="Stitch alerts">
+      <span class="bar-icon" aria-hidden="true">🔔</span><span class="bar-text" id="alerts-text">Alerts</span>
+    </button>
+    <button type="button" id="btn-place" class="bar-btn" aria-label="Placement notes">
+      <span class="bar-icon" aria-hidden="true">📌</span><span class="bar-text">Placing</span>
+    </button>
+  </nav>
+</section>
+
+<!-- Toasts -->
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<!-- Scripts (order matters) -->
+<script src="./js/themes.js"></script>
+<script src="./js/patterns.js"></script>
+<script src="./js/celebrate.js"></script>
+<script src="./js/audio.js"></script>
+<script src="./js/store.js"></script>
+<script src="./js/app.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  if (!('serviceWorker' in navigator)) return;
+  var secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!secure) return;
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(function () {});
+  });
+})();
+</script>
+
+</body>
+</html>

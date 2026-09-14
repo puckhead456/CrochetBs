@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <clipPath id="roundedSquare">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="#7cb87a"/>
+
+  <g clip-path="url(#roundedSquare)">
+    <!-- yarn ball -->
+    <circle cx="230" cy="290" r="128" fill="#fbf6ec"/>
+
+    <!-- yarn strand arcs (slightly darker cream/tan) -->
+    <g fill="none" stroke="#e8ddc2" stroke-width="10" stroke-linecap="round">
+      <path d="M 118 250 A 128 128 0 0 1 300 178"/>
+      <path d="M 108 320 A 128 128 0 0 0 300 390"/>
+      <path d="M 150 380 A 128 128 0 0 0 352 320"/>
+    </g>
+
+    <!-- small heart on the yarn ball -->
+    <path d="M 230 260
+             c -18 -26 -58 -12 -58 18
+             c 0 26 34 46 58 66
+             c 24 -20 58 -40 58 -66
+             c 0 -30 -40 -44 -58 -18 Z"
+          fill="#f2a6a0"/>
+
+    <!-- crochet hook, diagonal across the ball -->
+    <g stroke="#8b5e3c" stroke-linecap="round" fill="none">
+      <path d="M 356 118 L 168 396" stroke-width="26"/>
+      <!-- hook curl at the top end -->
+      <path d="M 356 118 c 26 -18 54 4 46 30 c -8 24 -38 26 -50 6" stroke-width="22"/>
+    </g>
+    <!-- highlight on hook shaft -->
+    <path d="M 352 126 L 176 388" stroke="#a9764f" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.6"/>
+  </g>
+</svg>
