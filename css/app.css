@@ -513,6 +513,48 @@ p { margin: 0 0 0.6em; }
   -webkit-box-orient: vertical;
 }
 
+.pattern-line-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pattern-line-notes {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
+/* Setup / foundation line, shown while the first row is being worked */
+.setup-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.setup-line-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+.setup-line-text {
+  flex: 1 1 auto;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 /* --------------------------------------------------------------------------
    9. Stitch button
    -------------------------------------------------------------------------- */
@@ -786,7 +828,8 @@ dialog.sheet .sheet-inner {
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
-.sheet-foot .btn { flex: 1 1 0; }
+.sheet-foot .btn { flex: 1 1 0; min-width: 0; overflow: hidden; }
+.sheet-foot .btn.wrap-label { font-size: 13px; line-height: 1.2; text-align: center; }
 
 @media (min-width: 700px) {
   dialog.sheet .sheet-inner {
@@ -1088,7 +1131,63 @@ textarea.mono {
 .status-opt b { font-size: 15px; }
 .status-opt span { font-size: 12px; color: var(--text-muted); }
 
+.pline-header {
+  margin: 10px 0 4px;
+  padding: 0 10px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+.pline-header:first-child { margin-top: 0; }
+
+.pline-setup {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--surface-2);
+  margin-bottom: 4px;
+}
+.pline-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+.pline-body { flex: 1 1 auto; min-width: 0; }
+.pline-count { font-weight: 800; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.pline.on .pline-count { color: var(--accent-text); }
+.pline-note {
+  margin: -2px 0 6px;
+  padding: 0 10px 0 22px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
 .parsed-note { font-size: 12px; color: var(--text-muted); font-weight: 700; }
+
+.pattern-extras { display: flex; flex-direction: column; gap: 10px; }
+.pattern-extras .linkish { display: inline; min-height: 0; padding: 0 2px; }
+
+/* Import pattern sheet */
+.imp-list { display: flex; flex-direction: column; gap: 8px; }
+.imp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.imp-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.imp-name { min-height: 40px; background: var(--surface); }
+.imp-meta { font-size: 12px; color: var(--text-muted); font-weight: 700; }
 
 .danger-zone {
   margin-top: 4px;

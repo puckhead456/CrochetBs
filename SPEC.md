@@ -104,6 +104,64 @@ Patterns.lineFor(lines, rowNumber) → Line|null       // the line to highlight 
 Patterns.summary(lines) → { rows: number, maxRow: number|null, hasTargets: boolean }
 ```
 
+## Patterns API v2 (supersedes the section above)
+
+Goal: a user copy/pastes instruction text straight out of a pattern PDF (which is messy: side-notes interleaved, two-column bleed, typos like `6..Inc`) and the app still finds the rows, the stitch counts, the sizes, the sections and the repeats. Reference fixtures (NOT committed, copyrighted): `tmp-pdf/bee.txt` (amigurumi, numbered `1.` rows, NO explicit counts, `5-6.` ranges, `6..`/`8-11..` typos, colour-change lines between rows, eye-placement paragraph interleaved) and `tmp-pdf/cardigan.txt` (garment, `Row 1 (WS):`, `Rows 3-4:`, `Rnd 1:`, `Next Row:`, `Setup:`, counts after a pipe `| 184 (208, 224) sts; ...`, multi-size lists `25 (29, 33, 37, 37) (41, 45, 49, 53)`, `Repeat Rows 5-8 ... until there are a total of N Rows`, trailing count with no unit `turn. 184 (208, 224)`).
+
+```js
+Patterns.parse(text, opts?) → Line[]            // opts.size = 0-based index into multi-size lists (default 0)
+Line = {
+  index: number, text: string,
+  kind: 'row' | 'setup' | 'header' | 'repeat' | 'note',
+  row: number|null, rowEnd: number|null,         // setup/foundation lines: row 0 (rowEnd 0)
+  section: number,                                // 0-based section index (see sections)
+  stitches: number|null,                          // EXPLICIT count found in the text, size-resolved
+  sizes: number[]|null,                           // all values when the explicit count was a multi-size list
+  computed: number|null,                          // count EVALUATED from the instruction when no explicit count
+  count: number|null,                             // stitches ?? computed
+  countSource: 'explicit' | 'computed' | null,
+  notes: string[],                                // short instruction-ish lines attached to this row (e.g. 'Colour change to black')
+}
+Patterns.targetFor(lines, row) → number|null     // Line.count of the first section-0 line whose range contains row (any section if none in 0)
+Patterns.lineFor(lines, row)   → Line|null       // same matching, ignores count
+Patterns.summary(lines) → {
+  rows, maxRow, hasTargets,                       // as before; hasTargets true if any count (explicit or computed)
+  computedOnly: boolean,                          // true when no explicit counts exist but computed ones do
+  sizes: string[]|null,                           // size names if a sizes line like `XS (S, M, L, 1X) (2X, 3X, 4X, 5X)` was found
+  multiSize: boolean,                             // any multi-size count list seen
+  sections: [{ index, name, makeCount, startLine, endLine, rows, maxRow }],
+  suggestions: { targetRows: number|null, repeat: { startRow, endRow, times: number|null, untilRows: number|null } | null },
+}
+Patterns.splitSections(text) → [{ name, makeCount, text }]   // for the "import into parts" flow; the whole text becomes one section named '' if no headers
+Patterns.detectSizes(text) → string[]|null
+Patterns.evaluate(instruction, prevCount) → number|null   // exposed for tests
+```
+
+### Row markers (start of trimmed line, optional bullets `-*•`)
+`Row 1`, `Row 1 (WS)`, `Rows 3-4`, `Rows 5 - 8`, `Rows 5–8`, `Rows 5 to 8`, `Rows 5 & 6`, `Rnd 1`, `Rnds 6-10`, `Round 1`, `Rounds 6–10`, `R1`, `R 1`, `Rnd1`, `ROW 1`, followed by `:`, `.`, `-`, `–`, `)` or whitespace. Bare numbers need adjacent punctuation: `1.`, `1:`, `1)`, `5-6.`, `6..`, `8-11..`, `7.. `. `Next Row`/`Next Rows`/`Next Rnd`/`Next Round` → row = (last row in section)+1 (rowEnd same). `Setup`, `Length Setup (WS)`, `Foundation`, `Foundation row`, `Base` (with `:` ) → kind 'setup', row 0. Never treat `5 sc in next st`, `6 inc around`, `2 sl sts` as markers. `R` must not match inside words.
+
+### Sections
+A **header** is a non-row line that is short (≤ 40 chars), has no sentence punctuation, and is either ALL CAPS letters (`BODY`, `WINGS`, `ASSEMBLY`) or Title Case (`First Section`, `Center Back`, `Sleeve Cuff`), optionally with a make-count: `Wings (make 2)`, `Legs x4`, `Leg (x4)`, `Ears - make 2`, `WINGS (2)`. A new section also starts when a row number ≤ the previous row's number appears (restart) even without a header (name ''). Header lines adjacent to each other where the second is a known non-part word (`EYES`, `ASSEMBLY`, `NOTES`, `MATERIALS`, `TERMINOLOGY`, `Finishing`, `Tips`) are not sections; `EYES`/`ASSEMBLY` blocks are notes. Section names are Title-cased (`BODY` → `Body`).
+
+### Explicit stitch counts (size-resolved)
+Search, in order: (1) after a pipe `|` anywhere in the line: first number or multi-size list there (`| 18 sts`, `| 184 (208, 224) sts; the number of puff...`, `| 7 sc, 2 sl sts` → 7); (2) at the END of the line: `(30)`, `[30]`, `(30 sts)`, `(30 sc)`, `(30 stitches)`, `= 30`, `– 30 sts`, `- 30`, `30 sts`, `30 sts.`, `(24, 30)` → last, `sts: 30`, `st count: 30`, `(30 sts total)`, trailing multi-size list with or without unit (`turn. 184 (208, 224)`), `= 184 (208, 224) sts`. Numbers INSIDE the instruction (`blo sc 88 (100, 108), Fsc 96`) are not counts. A multi-size list is `N (N, N, N) (N, N, N)` or `N (N, N)`; flatten in order and pick `opts.size` (clamp to length-1). Also resolve multi-size lists inside `Repeat ... until there are a total of 25 (29, ...) Rows`.
+
+### Computed counts (`evaluate`)
+When a row line has no explicit count, evaluate the instruction against the previous row's count (previous line in the same section with a count; setup counts as previous). Tokenize on commas/semicolons/`and`; groups in `()`, `[]`, or `* ... *`, with multipliers `x6`, `×6`, `*6`, `6 times`, `repeat 6 times`, `rep from * 5 more times` (= 6 total), or `repeat around` / `around` / `to end` / `across` (fill from previous count). Stitch vocabulary (produced, consumed): `sc`,`hdc`,`dc`,`tr`,`dtr`,`slst`/`sl st` (1,1); `puff`,`bobble`,`popcorn`,`cluster`,`shell` (1,1); `inc`,`increase`,`2 sc in next`,`2sc in same` (2,1); `dec`,`decrease`,`sc2tog`,`invdec`,`inv dec` (1,2); `3 sc in next st` (3,1); `sk`/`skip` (0,1); `ch N`,`turn`,`join`,`fasten off`,`flo/blo` prefixes, `mr`/`magic ring` (0,0). Counts: `6 sc`, `6sc`, `sc 6`, `sc in next 6 sts`, `sc in each of next 6 ch`, `2sc` → 2. Specials: `N sc in mr`, `Nsc in mr`, `N st in mr`, `mr N`, `magic ring N`, `N sc in magic ring/circle`, `MR with N sc` → N. `inc in each st`, `inc around`, `inc all around` → prev×2. `sc in each st`, `sc around`, `sc in each st around`, `sc all around`, `blo sc in each st across`, `sc across`, `work even` → prev. `dec in each st`, `dec all around`, `dec around` → prev/2. `X, Y, repeat around` (no brackets, trailing "repeat around"/"rep around"/"around") → treat the comma list before "repeat" as the group. Group filling: groups = floor(prev / consumedPerGroup); leftover stitches (prev mod consumed) each produce 1. `(inc, sc) x5, inc` → 5×3+2 = 17. `Ch1, turn, (inc, 2sc) x5, inc, sc` → 5×4+2+1 = 23. Typos to tolerate: `inx` → inc, `eact` → each. If anything in the line is not understood and no fill-from-previous rule applies → computed null (never guess). Lines whose only content is "work in pattern"/"continue in established pattern" → prev.
+
+### Notes attached to rows
+Non-row, non-header lines that are short (≤ 80 chars) and start with an instruction keyword (`colour change`, `color change`, `change to`, `switch to`, `add`, `stuff`, `tie off`, `fasten off`, `sl st`, `slst`, `join`, `place`, `insert`, `attach`, `sew`, `embroider`, `do not`, `don't`, `put`, `with`, `in <colour>`, `cut`, `leave`, `finish`, `close`) attach to the NEXT row line as `notes` (so "Colour change to black" shows when you start round 5). If there is no next row line in the section, attach to the previous row. Everything else (side commentary, page headers, footers like `Chronic.Creator`) is kind 'note' with no attachment.
+
+### Repeat / target suggestions
+`Repeat Rows 5-8 ... until there are a total of 25 (29, ...) Rows` → `suggestions.repeat = {startRow:5,endRow:8,times:null,untilRows:25}`, `suggestions.targetRows = 25`. `Repeat Rows 3-6 until you have at least 14 total rows` → same with 14. `Rep Rows 2-3` / `Next Rows: Rep Rows 2-3` / `Repeat rows 2-3 around` → repeat with times null, untilRows null. `Repeat Rows 5-8 six times` / `x6` / `6 more times` → times 6 (or 7 for "more"). `Rnd 6-10: sc around` is a range, not a repeat. Lines that match are kind 'repeat'. Only the first suggestion in section 0 is returned.
+
+### App/Store integration (v2)
+- `Part.sizeIndex: number` (default 0). `Store.linesFor(part)` calls `Patterns.parse(part.patternText, { size: part.sizeIndex })`; cache key includes sizeIndex.
+- Part editor: under the pattern textarea show the summary line, e.g. `24 rounds · counts computed ≈ · 3 sections detected`. If `summary.sizes` or `summary.multiSize`: a **Size** select (names from `sizes`, else "Size 1..N" up to the longest list seen) bound to `part.sizeIndex`. If `summary.suggestions` has anything: an **"Apply detected settings"** button that sets targetRows / repeat (confirm shows what it will set). If `summary.sections.length > 1`: a hint "This text has N sections — use Import pattern to split into parts."
+- New project-level sheet **Import pattern** (overflow menu + a link in the part editor): big textarea "Paste the instructions from your PDF", live list of detected sections from `Patterns.splitSections` with name (editable), make-count, row count and computed/explicit indicator, each with a checkbox (default on for sections that have rows). Buttons: **Create parts** (for each checked section: if a part with the same name exists (case-insensitive) → set its patternText and makeCount; else add a new part) and **Put it all in <active part>** (whole text into the active part). Toast with what happened.
+- Counter screen: the pattern line shows `notes` beneath it in a smaller muted line (joined with ' · '). A computed target renders as `≈ 24` (tilde-approx) in the stitch readout; explicit as `24`. When the working row is 1 and a setup line (row 0) exists, show it above the pattern line labelled "Setup".
+- Pattern sheet: render section headers as headers, setup lines labelled, `notes` inline under their row, computed counts as `≈N` at the end of the line.
+
 ## Themes contract
 
 `css/themes.css` defines, for each `html[data-theme="<id>"]`, ALL of these variables. `css/app.css` uses only these (plus its own layout numbers). Defaults for `:root` (no attribute) must equal `stardew-spring`.

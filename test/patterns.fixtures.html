@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Patterns.js fixture run (dev only)</title>
+<style>
+  body { font: 13px/1.45 Menlo, Consolas, monospace; background:#111; color:#eee; padding:16px; }
+  h1 { font-size:18px; }
+  h2 { font-size:15px; color:#9cf; margin-top:26px; border-bottom:1px solid #333; padding-bottom:4px; }
+  h3 { font-size:13px; color:#ffd479; margin:14px 0 4px; }
+  table { border-collapse:collapse; margin:4px 0 10px; width:100%; }
+  th, td { border:1px solid #333; padding:2px 6px; text-align:left; vertical-align:top; }
+  th { color:#9cf; font-weight:normal; }
+  td.k { color:#888; }
+  td.c { color:#7bd389; white-space:nowrap; }
+  td.cc { color:#ffd479; white-space:nowrap; }
+  td.no { color:#666; }
+  td.notes { color:#c9a0ff; }
+  .pass { color:#7bd389; }
+  .fail { color:#ff6b6b; background:#2a1414; }
+  #summary { margin-top:20px; font-size:18px; font-weight:bold; }
+  #summary.ok { color:#7bd389; }
+  #summary.bad { color:#ff6b6b; }
+  .warn { color:#ffb86b; }
+  .note { color:#888; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<h1>Patterns.js fixture run <span class="note">(dev only - loads copyrighted text from ../tmp-pdf at runtime; nothing here is committed)</span></h1>
+<div id="out">Loading fixtures...</div>
+<div id="uncomputed"></div>
+<div id="summary"></div>
+
+<script src="../js/patterns.js"></script>
+<script>
+'use strict';
+
+var P = window.Patterns;
+var out = document.getElementById('out');
+var passed = 0, failed = 0;
+var APPROX = '≈';
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function h(tag, text, cls) { out.appendChild(el(tag, cls, text)); }
+
+function log(ok, label, detail) {
+  if (ok) passed++; else failed++;
+  var line = (ok ? 'PASS' : 'FAIL') + ' - ' + label + (detail ? '  (' + detail + ')' : '');
+  out.appendChild(el('div', ok ? 'pass' : 'fail', line));
+  if (ok) console.log(line); else console.error(line);
+}
+function eq(actual, expected, label) {
+  var a = JSON.stringify(actual), b = JSON.stringify(expected);
+  log(a === b, label, a === b ? '' : 'expected ' + b + ' got ' + a);
+}
+
+// ---------------------------------------------------------------- helpers
+
+function sliceBlock(text, startRe, endRe) {
+  var lines = text.split(/\r\n|\r|\n/), on = false, res = [];
+  for (var i = 0; i < lines.length; i++) {
+    if (!on) { if (startRe.test(lines[i])) on = true; continue; }
+    if (endRe && endRe.test(lines[i])) break;
+    res.push(lines[i]);
+  }
+  return res.join('\n');
+}
+function stripMarkers(text) {
+  return text.split(/\r\n|\r|\n/).filter(function (l) { return !/^===/.test(l.trim()); }).join('\n');
+}
+function rowOf(lines, n) {
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (l.row !== null && l.row >= 1 && n >= l.row && n <= l.rowEnd) return l;
+  }
+  return null;
+}
+function lineWith(lines, sub) {
+  for (var i = 0; i < lines.length; i++) if (lines[i].text.indexOf(sub) >= 0) return lines[i];
+  return null;
+}
+function countOf(lines, n) { var l = rowOf(lines, n); return l ? l.count : null; }
+function sectionNamed(secs, name) {
+  for (var i = 0; i < secs.length; i++) if (secs[i].name === name) return secs[i];
+  return null;
+}
+function names(secs) { return secs.map(function (s) { return s.name; }); }
+
+var uncomputed = [];
+
+function renderLines(title, lines) {
+  h('h3', title);
+  var t = el('table');
+  var head = el('tr');
+  ['#', 'row', 'kind', 'count', 'notes', 'text'].forEach(function (x) { head.appendChild(el('th', null, x)); });
+  t.appendChild(head);
+  lines.forEach(function (l) {
+    if (!l.text.trim()) return;
+    var tr = el('tr');
+    tr.appendChild(el('td', 'k', String(l.index)));
+    var r = (l.row === null) ? '' : (l.row === l.rowEnd ? String(l.row) : l.row + '-' + l.rowEnd);
+    tr.appendChild(el('td', 'k', r));
+    tr.appendChild(el('td', 'k', l.kind));
+    var cTxt = (l.count === null) ? '' : (l.countSource === 'computed' ? APPROX + ' ' + l.count : String(l.count));
+    tr.appendChild(el('td', l.countSource === 'computed' ? 'cc' : (l.count === null ? 'no' : 'c'), cTxt));
+    tr.appendChild(el('td', 'notes', l.notes.join(' | ')));
+    tr.appendChild(el('td', null, l.text.trim().slice(0, 110)));
+    t.appendChild(tr);
+    if ((l.kind === 'row' || l.kind === 'setup') && l.count === null) {
+      uncomputed.push(title + ': ' + l.text.trim());
+    }
+  });
+  out.appendChild(t);
+}
+
+function renderSections(title, text) {
+  h('h2', title);
+  var secs = P.splitSections(text);
+  var all = P.parse(text);
+  var sum = P.summary(all);
+  h('div', 'splitSections -> ' + JSON.stringify(names(secs)) +
+    '  |  summary: rows=' + sum.rows + ' maxRow=' + sum.maxRow +
+    ' hasTargets=' + sum.hasTargets + ' computedOnly=' + sum.computedOnly +
+    ' multiSize=' + sum.multiSize + ' sizes=' + JSON.stringify(sum.sizes) +
+    ' suggestions=' + JSON.stringify(sum.suggestions), 'note');
+  secs.forEach(function (s, i) {
+    var lines = P.parse(s.text);
+    var ss = P.summary(lines);
+    renderLines('[' + i + '] ' + (s.name || '(unnamed)') + (s.makeCount > 1 ? ' x' + s.makeCount : '') +
+      '  -  ' + ss.rows + ' rows, max ' + ss.maxRow, lines);
+  });
+  return secs;
+}
+
+// ---------------------------------------------------------------- run
+
+Promise.all([
+  fetch('../tmp-pdf/bee.txt').then(function (r) { return r.text(); }),
+  fetch('../tmp-pdf/cardigan.txt').then(function (r) { return r.text(); })
+]).then(function (res) {
+  out.textContent = '';
+  try { run(res[0], res[1]); } catch (e) {
+    log(false, 'fixture run threw: ' + (e && e.stack ? e.stack : e));
+  }
+  if (uncomputed.length) {
+    var u = document.getElementById('uncomputed');
+    u.appendChild(el('h2', null, 'Row/setup lines with NO count (' + uncomputed.length + ')'));
+    uncomputed.forEach(function (x) { u.appendChild(el('div', 'warn', x)); });
+  }
+  var sEl = document.getElementById('summary');
+  sEl.textContent = passed + ' passed, ' + failed + ' failed';
+  sEl.className = failed === 0 ? 'ok' : 'bad';
+  console.log(passed + ' passed, ' + failed + ' failed');
+}, function (err) {
+  out.textContent = 'Could not load ../tmp-pdf fixtures: ' + err;
+  document.getElementById('summary').textContent = '0 passed, 1 failed';
+  document.getElementById('summary').className = 'bad';
+});
+
+function run(bee, cardigan) {
+
+  // =================================================================== BEE
+  var beeSecs = renderSections('BEE (tmp-pdf/bee.txt)', bee);
+  eq(names(beeSecs), ['Body', 'Wings', 'Body', 'Wings', 'Body', 'Wings'], 'bee: six sections in page order');
+
+  if (beeSecs.length === 6) {
+    var keyBody = P.parse(beeSecs[0].text);
+    var expect = { 1: 5, 2: 10, 3: 15, 4: 15, 5: 15, 6: 15, 7: 15, 8: 15, 9: 10, 10: 5 };
+    Object.keys(expect).forEach(function (r) {
+      var l = rowOf(keyBody, +r);
+      eq(l ? [l.count, l.countSource] : null, [expect[r], 'computed'], 'bee keyring Body row ' + r);
+    });
+    var r5 = rowOf(keyBody, 5), r6 = rowOf(keyBody, 6), r10 = rowOf(keyBody, 10);
+    log(!!r5 && r5.notes.join(' ').indexOf('Colour change to black') >= 0, 'bee keyring row 5 notes have "Colour change to black"', r5 ? JSON.stringify(r5.notes) : '');
+    log(!!r6 && r6.notes.join(' ').indexOf('Colour change to yellow') >= 0, 'bee keyring row 6 notes have "Colour change to yellow"', r6 ? JSON.stringify(r6.notes) : '');
+    log(!!r10 && r10.notes.join(' ').indexOf('Tie off, finish stuffing, and close') >= 0, 'bee keyring row 10 notes have the tie-off line (attached backwards)', r10 ? JSON.stringify(r10.notes) : '');
+
+    var med = P.parse(beeSecs[2].text);
+    var medExpect = { 1: 6, 2: 12, 3: 18, 4: 24, 5: 24, 6: 24, 7: 24, 8: 24, 15: 18, 16: 12, 17: 6 };
+    Object.keys(medExpect).forEach(function (r) {
+      eq(countOf(med, +r), medExpect[r], 'bee medium Body row ' + r);
+    });
+    var medRow2 = rowOf(med, 2);
+    log(!!medRow2 && /eact/i.test(medRow2.text) && medRow2.count === 12, 'bee medium row 2 "Inc in eact st" typo still computes 12');
+    var rng = rowOf(med, 5);
+    eq(rng ? [rng.row, rng.rowEnd] : null, [5, 6], 'bee medium rows 5-6 parsed as a range');
+
+    var big = P.parse(beeSecs[4].text);
+    var bigExpect = { 1: 6, 2: 12, 3: 18, 4: 24, 5: 30, 6: 36, 7: 42, 8: 42, 9: 42, 10: 42, 11: 42,
+      24: 36, 25: 30, 26: 24, 27: 18, 28: 12, 29: 6 };
+    Object.keys(bigExpect).forEach(function (r) {
+      eq(countOf(big, +r), bigExpect[r], 'bee big Body row ' + r);
+    });
+    var b8 = rowOf(big, 9);
+    eq(b8 ? [b8.row, b8.rowEnd] : null, [8, 11], 'bee big "8-11..sc in each st" is a range 8-11');
+    var b7 = rowOf(big, 7);
+    log(!!b7 && /Eyes placement/.test(b7.text) && b7.count === 42, 'bee big row 7 tolerates interleaved commentary after "repeat around"');
+
+    var bigWings = P.parse(beeSecs[5].text);
+    var wExpect = { 1: 6, 2: 12, 3: 17, 4: 23, 5: 29, 6: 35 };
+    Object.keys(wExpect).forEach(function (r) {
+      eq(countOf(bigWings, +r), wExpect[r], 'bee big Wings row ' + r);
+    });
+  }
+
+  // the eye-placement paragraph + footer are unattached notes
+  var beeAll = P.parse(bee);
+  var attached = {};
+  beeAll.forEach(function (l) { l.notes.forEach(function (n) { attached[n] = true; }); });
+  ['Sometimes it takes a bit of guess', 'clearly, but I just look at the bee',
+    'Eye placement can vary slightly', 'depending on the type of eyes you',
+    'and try to place them evenly.', 'the look of', 'Chronic.Creator ChronicCreatorr'
+  ].forEach(function (txt) {
+    var l = lineWith(beeAll, txt);
+    log(!!l && l.kind === 'note' && !attached[txt], 'bee: "' + txt + '" is an unattached note',
+      l ? ('kind=' + l.kind + ' attached=' + !!attached[txt]) : 'line not found');
+  });
+
+  // ============================================================== CARDIGAN
+  eq(P.detectSizes(cardigan), ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X', '5X'], 'cardigan detectSizes');
+
+  var rawP7 = sliceBlock(cardigan, /^=== PAGE 7 ===/, /^=== PAGE 7, de-interleaved/);
+  var deint = stripMarkers(sliceBlock(cardigan, /^=== PAGE 7, de-interleaved/, null));
+
+  // --- raw interleaved page 7 must not throw and still find the markers
+  var raw = P.parse(rawP7);
+  renderLines('RAW interleaved PAGE 7 (two-column bleed)', raw);
+  var rawRow1 = lineWith(raw, 'Row 1 (WS): Ch 19');
+  eq(rawRow1 ? [rawRow1.row, rawRow1.stitches, rawRow1.countSource] : null, [1, 18, 'explicit'], 'raw p7: "Row 1 (WS)" -> 18 sts explicit');
+  var raw34 = lineWith(raw, 'Rows 3-4: Ch 1, [skip');
+  eq(raw34 ? [raw34.row, raw34.rowEnd] : null, [3, 4], 'raw p7: "Rows 3-4" marker');
+  var raw56 = lineWith(raw, 'Rows 5-6: Ch 1, blo sc in each st across');
+  eq(raw56 ? [raw56.row, raw56.rowEnd] : null, [5, 6], 'raw p7: "Rows 5-6" marker');
+
+  // --- de-interleaved
+  var secs = renderSections('CARDIGAN (de-interleaved blocks)', deint);
+  var nm = names(secs);
+  ['First Section', 'Center Back', 'Second Section', 'Sleeves', 'Sleeve Cuff', 'Front Trim'].forEach(function (want, i, arr) {
+    log(nm.indexOf(want) >= 0, 'cardigan: section "' + want + '" detected', JSON.stringify(nm));
+  });
+  var order = ['First Section', 'Center Back', 'Second Section', 'Sleeves', 'Sleeve Cuff', 'Front Trim'];
+  var seq = nm.filter(function (n) { return order.indexOf(n) >= 0; });
+  eq(seq, order, 'cardigan: named sections appear in pattern order');
+
+  var first = sectionNamed(secs, 'First Section');
+  if (first) {
+    var f0 = P.parse(first.text, { size: 0 });
+    var setup = lineWith(f0, 'chain 185');
+    eq(setup ? [setup.kind, setup.row, setup.count] : null, ['setup', 0, 184], 'cardigan First Section: "For 23 (26, 28)", chain 185 ... | 184 ..." is setup row 0 with count 184');
+    var r12 = rowOf(f0, 1);
+    eq(r12 ? [r12.row, r12.rowEnd, r12.stitches, r12.countSource] : null, [1, 2, 184, 'explicit'], 'cardigan Rows 1-2 explicit 184 (size 0)');
+    eq(r12 ? r12.sizes : null, [184, 208, 224], 'cardigan Rows 1-2 sizes [184, 208, 224]');
+    eq(rowOf(P.parse(first.text, { size: 1 }), 1).stitches, 208, 'cardigan Rows 1-2 with size 1 -> 208');
+    var f2 = P.parse(first.text, { size: 2 });
+    eq(rowOf(f2, 1).stitches, 224, 'cardigan Rows 1-2 with size 2 -> 224');
+    var r34 = rowOf(f0, 3);
+    eq(r34 ? [r34.row, r34.rowEnd, r34.count, r34.countSource] : null, [3, 4, 184, 'computed'], 'cardigan Rows 3-4 computed 184 (fill from previous)');
+    eq(rowOf(f2, 3).count, 224, 'cardigan Rows 3-4 computed 224 at size 2');
+    var sug0 = P.summary(f0).suggestions;
+    eq(sug0.repeat, { startRow: 5, endRow: 8, times: null, untilRows: 25 }, 'cardigan First Section repeat suggestion');
+    eq(sug0.targetRows, 25, 'cardigan First Section targetRows 25 (size 0)');
+    eq(P.summary(f2).suggestions.targetRows, 33, 'cardigan First Section targetRows 33 (size 2)');
+    eq(P.summary(P.parse(first.text, { size: 8 })).suggestions.targetRows, 53, 'cardigan First Section targetRows 53 (size 8)');
+  } else { log(false, 'cardigan First Section found'); }
+
+  var cb = sectionNamed(secs, 'Center Back');
+  if (cb) {
+    var c0 = P.parse(cb.text, { size: 0 });
+    var cr1 = rowOf(c0, 1);
+    eq(cr1 ? [cr1.stitches, cr1.countSource] : null, [88, 'explicit'], 'cardigan Center Back Row 1 -> 88 (not 96/108)');
+    eq(rowOf(P.parse(cb.text, { size: 2 }), 1).stitches, 108, 'cardigan Center Back Row 1 size 2 -> 108');
+  } else { log(false, 'cardigan Center Back found'); }
+
+  // "Next Row:" follows "Rows 7-8" in the restarted half of Center Back
+  var deintLines = P.parse(deint);
+  var nextRow = lineWith(deintLines, 'Next Row: Ch 1, blo sc in each st across');
+  eq(nextRow ? [nextRow.kind, nextRow.row] : null, ['row', 9], 'cardigan "Next Row:" after "Rows 7-8" -> row 9');
+
+  var second = sectionNamed(secs, 'Second Section');
+  if (second) {
+    var s0 = P.parse(second.text, { size: 0 });
+    var sr1 = rowOf(s0, 1);
+    eq(sr1 ? [sr1.stitches, sr1.countSource] : null, [184, 'explicit'], 'cardigan Second Section Row 1 -> 184 (trailing multi-size, not 88/96)');
+  } else { log(false, 'cardigan Second Section found'); }
+
+  var sleeves = sectionNamed(secs, 'Sleeves');
+  if (sleeves) {
+    eq(rowOf(P.parse(sleeves.text, { size: 0 }), 1).stitches, 58, 'cardigan Sleeves Rnd 1 size 0 -> 58');
+    eq(rowOf(P.parse(sleeves.text, { size: 4 }), 1).stitches, 66, 'cardigan Sleeves Rnd 1 size 4 -> 66');
+    eq(rowOf(P.parse(sleeves.text, { size: 8 }), 1).stitches, 74, 'cardigan Sleeves Rnd 1 size 8 -> 74');
+  } else { log(false, 'cardigan Sleeves found'); }
+
+  var cuff = sectionNamed(secs, 'Sleeve Cuff');
+  if (cuff) {
+    var cu = P.parse(cuff.text);
+    eq(rowOf(cu, 1).stitches, 7, 'cardigan Sleeve Cuff Row 1 -> 7 sts');
+    var rep = lineWith(cu, 'Repeat Rows 2-3 around the sleeve edge');
+    eq(rep ? rep.kind : null, 'repeat', 'cardigan Sleeve Cuff "Repeat Rows 2-3 around..." is kind repeat');
+  } else { log(false, 'cardigan Sleeve Cuff found'); }
+
+  var trim = sectionNamed(secs, 'Front Trim');
+  if (trim) {
+    var tr = P.parse(trim.text);
+    var setupT = lineWith(tr, 'Setup: With the right side facing');
+    eq(setupT ? [setupT.kind, setupT.row] : null, ['setup', 0], 'cardigan Front Trim "Setup:" -> kind setup row 0');
+    var t1 = rowOf(tr, 1);
+    eq(t1 ? [t1.stitches, t1.countSource] : null, [7, 'explicit'], 'cardigan Front Trim Row 1 "| 7 sc, 2 sl sts" -> 7');
+    var t2 = rowOf(tr, 2);
+    eq(t2 ? [t2.count, t2.countSource] : null, [7, 'computed'], 'cardigan Front Trim Row 2 "Sk 2 sl sts, blo sc 7, turn." -> computed 7');
+    var nrep = lineWith(tr, 'Next Rows: Rep Rows 2-3');
+    eq(nrep ? nrep.kind : null, 'repeat', 'cardigan Front Trim "Next Rows: Rep Rows 2-3" is kind repeat');
+    eq(P.summary(tr).suggestions.repeat, { startRow: 2, endRow: 3, times: null, untilRows: null }, 'cardigan Front Trim repeat suggestion {2,3,null,null}');
+  } else { log(false, 'cardigan Front Trim found'); }
+}
+</script>
+</body>
+</html>

@@ -178,9 +178,12 @@
     els.rowProgress = $('#row-progress');
     els.rowBarFill = $('#row-bar-fill');
     els.rowBarLabel = $('#row-bar-label');
+    els.setupLine = $('#setup-line');
+    els.setupText = $('#setup-line-text');
     els.patternLine = $('#pattern-line');
     els.patternTag = $('#pattern-line-tag');
     els.patternText = $('#pattern-line-text');
+    els.patternNotes = $('#pattern-line-notes');
     els.stitchBtn = $('#stitch-btn');
     els.stitchNumber = $('#stitch-number');
     els.stitchReadout = $('#stitch-readout');
@@ -749,12 +752,26 @@
       els.repeat.hidden = true;
     }
 
+    // Setup / foundation line — only while the first row is being worked.
+    var setup = ri.workingRow === 1 ? Store.setupLine(prt) : null;
+    if (setup && setup.text && els.setupLine) {
+      els.setupLine.hidden = false;
+      els.setupText.textContent = setup.text;
+    } else if (els.setupLine) {
+      els.setupLine.hidden = true;
+    }
+
     // Pattern line
     var line = Store.lineForRow(prt, ri.patternRow);
     if (line && line.text) {
       els.patternLine.hidden = false;
       els.patternTag.textContent = shortRowWord(p) + ' ' + ri.patternRow;
       els.patternText.textContent = line.text;
+      var notes = Store.notesOf(line);
+      if (els.patternNotes) {
+        els.patternNotes.hidden = !notes.length;
+        els.patternNotes.textContent = notes.join(' · ');
+      }
     } else {
       els.patternLine.hidden = true;
     }
@@ -762,11 +779,13 @@
     // Stitches
     els.stitchNumber.textContent = String(prt.stitch);
     var g = p.groupSize > 0 ? p.groupSize : 10;
+    // `line` is the row the counter is on, so reuse it instead of a second lookup.
     var target = Store.currentTarget(prt);
+    var approx = target && Store.isComputed(line) ? '≈ ' : '';
     var groupNo = prt.stitch === 0 ? 1 : Math.ceil(prt.stitch / g);
     var within = prt.stitch === 0 ? 0 : ((prt.stitch - 1) % g) + 1;
     var readout = 'Group ' + groupNo;
-    if (target) readout += ' of ' + Math.ceil(target / g);
+    if (target) readout += ' of ' + approx + Math.ceil(target / g);
     readout += ' · stitch ' + within + ' of ' + g;
     els.stitchReadout.textContent = readout;
 
@@ -774,7 +793,7 @@
       els.stitchProgress.hidden = false;
       var spct = Math.max(0, Math.min(100, (prt.stitch / target) * 100));
       els.stitchBarFill.style.width = spct + '%';
-      els.stitchBarLabel.textContent = prt.stitch + ' / ' + target;
+      els.stitchBarLabel.textContent = prt.stitch + ' / ' + approx + target;
     } else {
       els.stitchProgress.hidden = true;
     }
@@ -1131,21 +1150,166 @@
     if (!p || !prt) return;
 
     var nameInput, makeStep, targetInput, repEnable, repStart, repEnd, repTimes,
-      alertsInput, placeArea, patternArea, parsedNote;
+      alertsInput, placeArea, patternArea, extras;
     var repeatOn = !!prt.repeat.enabled;
+    var sizeIndex = prt.sizeIndex || 0;
+
+    /** A part-shaped object so the Store can parse the unsaved textarea. */
+    function previewPart() {
+      return { id: prt.id + ':preview', patternText: patternArea.value, sizeIndex: sizeIndex };
+    }
+
+    function collectPatch() {
+      return {
+        name: nameInput.value,
+        makeCount: makeStep.get(),
+        targetRows: targetInput.value === '' ? null : targetInput.value,
+        repeat: {
+          enabled: repeatOn,
+          startRow: repStart.value,
+          endRow: repEnd.value,
+          times: repTimes.value
+        },
+        alerts: parseNumberList(alertsInput.value),
+        placementNotes: placeArea.value,
+        patternText: patternArea.value,
+        sizeIndex: sizeIndex
+      };
+    }
+
+    function syncRepeatSwitch() {
+      var sw = repEnable ? repEnable.querySelector('.switch') : null;
+      if (sw) sw.setAttribute('aria-checked', repeatOn ? 'true' : 'false');
+    }
+
+    function summaryLine(s, tmp) {
+      var bits = [];
+      if (!s.rows) {
+        bits.push('No numbered ' + rowWord(p).toLowerCase() + 's found yet');
+      } else {
+        bits.push(
+          s.rows + ' ' + rowWord(p).toLowerCase() + (s.rows === 1 ? '' : 's') +
+          (s.maxRow ? ' (up to ' + s.maxRow + ')' : '')
+        );
+        if (!s.hasTargets) bits.push('no stitch counts');
+        else if (s.computedOnly) bits.push('counts computed ≈');
+        else bits.push('stitch counts found');
+      }
+      if (s.sections && s.sections.length > 1) bits.push(s.sections.length + ' sections detected');
+      var sizeNames = (s.sizes && s.sizes.length) ? s.sizes : (p.sizes && p.sizes.length ? p.sizes : null);
+      if (sizeNames) {
+        bits.push('sizes: ' + sizeNames.join(', '));
+      } else if (s.multiSize) {
+        var n = Store.sizeCount(tmp);
+        if (n > 1) bits.push(n + ' sizes');
+      }
+      return bits.join(' · ');
+    }
+
+    function suggestedTimes(r) {
+      var len = r.endRow - r.startRow + 1;
+      var t = typeof r.times === 'number' && r.times > 0 ? Math.floor(r.times) : null;
+      if (t === null && typeof r.untilRows === 'number' && r.untilRows > 0 && len > 0) {
+        t = Math.floor((r.untilRows - r.startRow + 1) / len);
+      }
+      return Math.max(1, t || 1);
+    }
+
+    function suggestionBits(sug) {
+      var out = [];
+      if (sug.targetRows) {
+        out.push('Target ' + rowWord(p).toLowerCase() + 's: ' + sug.targetRows);
+      }
+      var r = sug.repeat;
+      if (r && r.startRow && r.endRow && r.endRow >= r.startRow) {
+        out.push(
+          'Repeat ' + rowWord(p).toLowerCase() + 's ' + r.startRow + '–' + r.endRow +
+          ' × ' + suggestedTimes(r)
+        );
+      }
+      return out;
+    }
+
+    function applyDetected(sug) {
+      var bits = suggestionBits(sug);
+      confirmSheet({
+        title: 'Apply detected settings?',
+        message: 'This will set — ' + bits.join('; ') + '.',
+        confirmText: 'Apply'
+      }).then(function (ok) {
+        if (!ok) return;
+        Store.applySuggestions(p.id, prt.id, sug);
+        targetInput.value = prt.targetRows == null ? '' : String(prt.targetRows);
+        repStart.value = String(prt.repeat.startRow);
+        repEnd.value = String(prt.repeat.endRow);
+        repTimes.value = String(prt.repeat.times);
+        repeatOn = !!prt.repeat.enabled;
+        syncRepeatSwitch();
+        toast('Applied: ' + bits.join(' · '));
+      });
+    }
 
     function refreshParsed() {
-      // Read straight from the textarea via a temp part-shaped object.
-      var tmp = { id: prt.id + ':preview', patternText: patternArea.value };
-      var s = Store.patternSummary(tmp);
+      if (!extras) return;
+      clear(extras);
       if (!patternArea.value.trim()) {
-        parsedNote.textContent = 'Paste the pattern for this part to get row highlighting and stitch targets.';
-      } else if (!s.rows) {
-        parsedNote.textContent = 'Parsed: no numbered rows found yet.';
-      } else {
-        parsedNote.textContent =
-          'Parsed: ' + s.rows + ' rows' + (s.maxRow ? ' (up to ' + s.maxRow + ')' : '') +
-          (s.hasTargets ? ', targets found' : ', no stitch counts');
+        extras.appendChild(
+          el('div', 'parsed-note', 'Paste the pattern for this part to get row highlighting and stitch targets.')
+        );
+        return;
+      }
+      var tmp = previewPart();
+      var s = Store.patternSummary(tmp);
+      extras.appendChild(el('div', 'parsed-note', summaryLine(s, tmp)));
+
+      /* ---- Size picker ---- */
+      var pickerNames = (s.sizes && s.sizes.length) ? s.sizes : (p.sizes && p.sizes.length ? p.sizes : null);
+      if (pickerNames || s.multiSize) {
+        var n = Math.max(Store.sizeCount(tmp), pickerNames ? pickerNames.length : 0, 1);
+        if (n > 1) {
+          var sel = document.createElement('select');
+          for (var i = 0; i < n; i++) {
+            var opt = document.createElement('option');
+            opt.value = String(i);
+            opt.textContent = pickerNames && pickerNames[i] ? pickerNames[i] : 'Size ' + (i + 1);
+            sel.appendChild(opt);
+          }
+          sel.value = String(Math.min(sizeIndex, n - 1));
+          sizeIndex = parseInt(sel.value, 10) || 0;
+          on(sel, 'change', function () {
+            sizeIndex = parseInt(sel.value, 10) || 0;
+            refreshParsed();
+          });
+          extras.appendChild(field('Size', sel, 'Multi-size counts use this size.'));
+        }
+      }
+
+      /* ---- Detected settings ---- */
+      var sug = s.suggestions;
+      if (sug && suggestionBits(sug).length) {
+        var applyBtn = button('btn block', '✨ Apply detected settings');
+        on(applyBtn, 'click', function () {
+          applyDetected(sug);
+        });
+        extras.appendChild(applyBtn);
+      }
+
+      /* ---- Multi-section hint ---- */
+      if (s.sections && s.sections.length > 1) {
+        var hint = el('div', 'field-hint');
+        hint.appendChild(
+          document.createTextNode('This text has ' + s.sections.length + ' sections — use ')
+        );
+        var link = button('linkish', 'Import pattern');
+        on(link, 'click', function () {
+          Store.updatePart(p.id, prt.id, collectPatch());
+          closeAllSheets();
+          render();
+          openImportSheet(p.id, patternArea.value);
+        });
+        hint.appendChild(link);
+        hint.appendChild(document.createTextNode(' to split it into parts.'));
+        extras.appendChild(hint);
       }
     }
 
@@ -1185,9 +1349,9 @@
         body.appendChild(field('Placement notes', placeArea));
 
         patternArea = textArea(prt.patternText, 'mono', 'Rnd 1: 6 sc in MR (6)\nRnd 2: inc x6 (12)');
-        parsedNote = el('div', 'parsed-note');
+        extras = el('div', 'pattern-extras');
         body.appendChild(field('Pattern text', patternArea));
-        body.appendChild(parsedNote);
+        body.appendChild(extras);
         on(patternArea, 'input', debounce(refreshParsed, 250));
         refreshParsed();
 
@@ -1233,20 +1397,7 @@
           text: 'Save',
           cls: 'btn primary',
           onClick: function (api) {
-            Store.updatePart(p.id, prt.id, {
-              name: nameInput.value,
-              makeCount: makeStep.get(),
-              targetRows: targetInput.value === '' ? null : targetInput.value,
-              repeat: {
-                enabled: repeatOn,
-                startRow: repStart.value,
-                endRow: repEnd.value,
-                times: repTimes.value
-              },
-              alerts: parseNumberList(alertsInput.value),
-              placementNotes: placeArea.value,
-              patternText: patternArea.value
-            });
+            Store.updatePart(p.id, prt.id, collectPatch());
             api.close();
             render();
           }
@@ -1291,6 +1442,161 @@
   }
 
   /* ================================================================== *
+   * 16b. Import pattern sheet
+   * ================================================================== */
+
+  var IMPORT_EMPTY =
+    'No rows found yet. Paste the instruction part of your pattern ' +
+    '(e.g. “Rnd 1: 6 sc in MR (6)”).';
+
+  function sectionRowInfo(text, seq) {
+    var s = Store.patternSummary({ id: 'import:' + seq, patternText: text, sizeIndex: 0 });
+    return { rows: s.rows, computedOnly: s.computedOnly, hasTargets: s.hasTargets };
+  }
+
+  /**
+   * Paste a whole pattern, see the sections the parser found, then either
+   * create/update one part per section or drop the lot into the active part.
+   */
+  function openImportSheet(projectId, initialText) {
+    var p = Store.project(projectId);
+    if (!p) return;
+    var activeName = (Store.activePart(p) || {}).name || 'this part';
+    var area, list, rows = [];
+
+    function buildRows() {
+      var secs = Store.splitSections(area.value);
+      var prev = rows;
+      rows = secs.map(function (sec, i) {
+        var info = sectionRowInfo(sec.text, i);
+        var old = prev[i];
+        var keep = old && old.parserName === sec.name;
+        return {
+          parserName: sec.name,
+          name: keep ? old.name : sec.name,
+          checked: keep ? old.checked : info.rows > 0,
+          makeCount: sec.makeCount,
+          text: sec.text,
+          rows: info.rows,
+          computedOnly: info.computedOnly,
+          hasTargets: info.hasTargets
+        };
+      });
+    }
+
+    function renderList() {
+      clear(list);
+      var any = false;
+      rows.forEach(function (r) { if (r.rows > 0) any = true; });
+      if (!rows.length || !any) {
+        list.appendChild(el('p', 'muted', IMPORT_EMPTY));
+        return;
+      }
+      rows.forEach(function (r, i) {
+        var item = el('div', 'imp-item');
+        var chk = button('check', '✓', 'Import ' + (r.name || 'section ' + (i + 1)));
+        chk.setAttribute('role', 'checkbox');
+        chk.setAttribute('aria-checked', r.checked ? 'true' : 'false');
+        on(chk, 'click', function () {
+          r.checked = !r.checked;
+          chk.setAttribute('aria-checked', r.checked ? 'true' : 'false');
+        });
+
+        var main = el('div', 'imp-main');
+        var nameIn = textInput(r.name, 'Part ' + (i + 1));
+        nameIn.className = 'imp-name';
+        on(nameIn, 'input', function () {
+          r.name = nameIn.value;
+        });
+        main.appendChild(nameIn);
+
+        var meta = [];
+        if (r.makeCount > 1) meta.push('×' + r.makeCount);
+        meta.push(r.rows ? r.rows + ' ' + rowWord(p).toLowerCase() + (r.rows === 1 ? '' : 's') : 'no rows');
+        if (r.rows && r.computedOnly) meta.push('counts computed ≈');
+        else if (r.rows && r.hasTargets) meta.push('counts found');
+        main.appendChild(el('div', 'imp-meta', meta.join(' · ')));
+
+        item.appendChild(chk);
+        item.appendChild(main);
+        list.appendChild(item);
+      });
+    }
+
+    function refresh() {
+      buildRows();
+      renderList();
+    }
+
+    function checkedSections() {
+      var out = [];
+      rows.forEach(function (r) {
+        if (r.checked) out.push({ name: (r.name || '').trim(), makeCount: r.makeCount, text: r.text });
+      });
+      return out;
+    }
+
+    openSheet({
+      title: 'Import pattern',
+      build: function (body) {
+        area = textArea(initialText || '', 'mono', 'Paste the instructions from your PDF');
+        area.setAttribute('aria-label', 'Pattern text to import');
+        body.appendChild(field('Pattern text', area, 'Paste the instructions from your PDF.'));
+        list = el('div', 'imp-list');
+        body.appendChild(field('Sections detected', list));
+        on(area, 'input', debounce(refresh, 200));
+        refresh();
+      },
+      footer: [
+        {
+          text: 'Put it all in ' + (activeName.length > 16 ? activeName.slice(0, 15) + '…' : activeName),
+          cls: 'btn ghost wrap-label',
+          onClick: function (api) {
+            if (!area.value.trim()) {
+              toast('Nothing to import yet');
+              return;
+            }
+            Store.importPatternSections(
+              p.id,
+              [{ name: activeName, makeCount: 1, text: area.value }],
+              { mode: 'active', text: area.value }
+            );
+            api.close();
+            render();
+            toast('Pattern saved into ' + activeName);
+          }
+        },
+        {
+          text: 'Create parts',
+          cls: 'btn primary',
+          onClick: function (api) {
+            var secs = checkedSections();
+            if (!secs.length) {
+              toast('Tick at least one section first');
+              return;
+            }
+            var res = Store.importPatternSections(p.id, secs, { mode: 'parts', text: area.value });
+            api.close();
+            render();
+            var msg;
+            if (res.created && res.updated) {
+              msg = 'Created ' + res.created + ' part' + (res.created === 1 ? '' : 's') +
+                ' · updated ' + res.updated;
+            } else if (res.created) {
+              msg = 'Created ' + res.created + ' part' + (res.created === 1 ? '' : 's');
+            } else if (res.updated) {
+              msg = 'Updated ' + res.updated + ' part' + (res.updated === 1 ? '' : 's');
+            } else {
+              msg = 'Nothing imported';
+            }
+            toast(msg, { ms: 3200 });
+          }
+        }
+      ]
+    });
+  }
+
+  /* ================================================================== *
    * 17. Pattern sheet
    * ================================================================== */
 
@@ -1300,6 +1606,9 @@
     if (!p || !prt) return;
     var lines = Store.linesFor(prt);
     var ri = Store.repeatInfo(prt);
+    // Only the section the counter is actually working in gets highlighted.
+    var currentLine = Store.lineForRow(prt, ri.patternRow);
+    var currentSection = currentLine && typeof currentLine.section === 'number' ? currentLine.section : null;
 
     openSheet({
       title: 'Pattern · ' + prt.name,
@@ -1319,9 +1628,38 @@
         var currentNode = null;
         lines.forEach(function (line) {
           var hasRow = typeof line.row === 'number' && line.row > 0;
-          var isCurrent = hasRow && lineCoversRow(line, ri.patternRow);
+          var isSetup = line.kind === 'setup' || (line.row === 0 && line.kind !== 'header' && line.kind !== 'note');
+          var notes = Store.notesOf(line);
+
+          // Section headers are not tappable.
+          if (line.kind === 'header') {
+            wrap.appendChild(el('div', 'pline-header', line.text));
+            return;
+          }
+
+          // Setup / foundation lines: labelled, not tappable (there is no row 0).
+          if (!hasRow && isSetup) {
+            var setupNode = el('div', 'pline pline-setup');
+            setupNode.appendChild(el('span', 'pline-tag', 'Setup'));
+            setupNode.appendChild(el('span', 'pline-body', line.text));
+            wrap.appendChild(setupNode);
+            appendNotes(wrap, notes);
+            return;
+          }
+
+          var isCurrent =
+            hasRow &&
+            lineCoversRow(line, ri.patternRow) &&
+            (currentSection === null || typeof line.section !== 'number' || line.section === currentSection);
           var cls = 'pline' + (hasRow ? ' has-row' : ' plain') + (isCurrent ? ' on' : '');
           var node = button(cls, line.text);
+          if (hasRow && Store.isComputed(line)) {
+            var c = Store.countOf(line);
+            if (c !== null) {
+              node.appendChild(document.createTextNode(' '));
+              node.appendChild(el('span', 'pline-count', '≈' + c));
+            }
+          }
           if (isCurrent && !currentNode) {
             currentNode = node;
             node.setAttribute('aria-current', 'true');
@@ -1345,6 +1683,7 @@
             node.disabled = true;
           }
           wrap.appendChild(node);
+          appendNotes(wrap, notes);
         });
         body.appendChild(wrap);
 
@@ -1358,6 +1697,14 @@
           }, 40);
         }
       }
+    });
+  }
+
+  /** Notes attached to a pattern line, rendered underneath it. */
+  function appendNotes(wrap, notes) {
+    if (!notes || !notes.length) return;
+    notes.forEach(function (n) {
+      wrap.appendChild(el('div', 'pline-note', n));
     });
   }
 
@@ -1580,6 +1927,7 @@
     if (!p) return;
     var items = [
       { icon: '🧩', label: 'Parts', run: function () { openPartsSheet(p.id); } },
+      { icon: '📋', label: 'Import pattern', run: function () { openImportSheet(p.id, ''); } },
       { icon: '✅', label: 'Checklist', run: function () { openChecklistSheet(p.id); } },
       { icon: '📝', label: 'Notes', run: function () { openNotesSheet(p.id); } },
       { icon: '🕘', label: 'History', run: function () { openHistorySheet(p.id); } },
@@ -1992,6 +2340,7 @@
     toast: toast,
     confirmSheet: confirmSheet,
     openSheet: openSheet,
+    openImportSheet: openImportSheet,
     applyTheme: applyTheme,
     version: APP_VERSION
   };

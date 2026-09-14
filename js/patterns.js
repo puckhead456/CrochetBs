@@ -1,164 +1,885 @@
 // js/patterns.js
-// window.Patterns — crochet pattern-text parser. Pure functions, no DOM.
+// window.Patterns - crochet pattern-text parser (v2). Pure functions, no DOM.
+//
+// Sections of this file:
+//   1. small helpers / normalisation
+//   2. stitch vocabulary
+//   3. row + setup markers
+//   4. explicit stitch counts (multi-size aware)
+//   5. size names
+//   6. evaluate() - computed counts (tokenizer + vocabulary)
+//   7. headers / sections / notes / repeat suggestions
+//   8. parse(), targetFor(), lineFor(), summary(), splitSections()
 'use strict';
 
 (function () {
 
-  // ---------------------------------------------------------------------
-  // Row / round marker detection
-  // ---------------------------------------------------------------------
+  // =====================================================================
+  // 1. Helpers
+  // =====================================================================
 
-  // Keyword-prefixed markers: "Rnd 5", "Rnd5", "Round 5", "R5", "R 5",
-  // "Row 5", "Rows 5-8", "Rnds 6–10", "Rnd 5 to 8", optional leading
-  // bullet ("-", "*", "•") and whitespace.
-  // Alternation order matters: longer keywords must be tried before the
-  // bare "r" so "round"/"rows" etc. are matched in full rather than just
-  // their leading "r".
-  var KEYWORD_RE = /^\s*[-*•]?\s*(?:rnds?|rounds?|rows?|r)\.?\s*(\d+)(?:\s*(?:-|–|—|to)\s*(\d+))?/i;
+  var DASHES = /[\u2010-\u2015\u2212]/g;
 
-  // Bare numeric markers: "5.", "5:", "5)", "12. ..." — the digits must be
-  // IMMEDIATELY followed by one of . : ) (no space), so that ordinary
-  // pattern text like "5 sc in next st" or "6 inc around" is never
-  // mistaken for a row marker.
-  var BARE_RE = /^\s*[-*•]?\s*(\d+)[.):]/;
+  function normDashes(s) { return s.replace(DASHES, '-'); }
 
-  // Returns { row, rowEnd, rest } where `rest` is the remainder of the line
-  // AFTER the row-marker match (or the whole line, if there was no marker).
-  // Stitch-count detection is run only against `rest` so that a range's own
-  // end number (e.g. the "10" in "Rnd 6-10") can never be mistaken for a
-  // trailing stitch count on a marker-only line.
-  function detectRow(trimmedLine) {
-    var m = KEYWORD_RE.exec(trimmedLine);
-    if (m) {
-      var row = parseInt(m[1], 10);
-      var rowEnd = (m[2] !== undefined) ? parseInt(m[2], 10) : row;
-      return { row: row, rowEnd: rowEnd, rest: trimmedLine.slice(m[0].length) };
-    }
-    var m2 = BARE_RE.exec(trimmedLine);
-    if (m2) {
-      var row2 = parseInt(m2[1], 10);
-      return { row: row2, rowEnd: row2, rest: trimmedLine.slice(m2[0].length) };
-    }
-    return { row: null, rowEnd: null, rest: trimmedLine };
+  function trimLine(s) {
+    return normDashes(String(s == null ? '' : s))
+      .replace(/\u00a0/g, ' ')
+      .replace(/\s+$/, '')
+      .replace(/^\s+/, '');
   }
 
-  // ---------------------------------------------------------------------
-  // Stitch count detection (end of line)
-  // ---------------------------------------------------------------------
+  function titleCase(s) {
+    return s.toLowerCase().replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+  }
 
-  // Content allowed inside a trailing bracket for it to count as a stitch
-  // total, e.g. "30", "30 sts", "30 sc", "30 stitches", "30 sts total",
-  // "24, 30" (take the last number). Rejects non-count parentheticals like
-  // "(make 2)".
-  var BRACKET_CONTENT_RE = /^(?:\d+\s*,\s*)*(\d+)\s*(?:(?:sts?|stitches?|sc|total)\s*)*$/i;
+  function num(s) { var n = parseInt(s, 10); return isNaN(n) ? null : n; }
 
-  // Trailing "(...)" or "[...]" group, allowing trailing punctuation/space
-  // after the closing bracket.
+  // Typos seen in real PDFs.
+  function fixTypos(s) {
+    return s
+      .replace(/\binx\b/gi, 'inc')
+      .replace(/\beact\b/gi, 'each')
+      .replace(/\bevry\b/gi, 'every')
+      .replace(/\bstich(es)?\b/gi, 'stitch$1');
+  }
+
+  // =====================================================================
+  // 2. Stitch vocabulary  (produced, consumed)
+  // =====================================================================
+
+  var VOCAB = [
+    ['sl\\s*st(?:itch)?(?:es)?', 1, 1],
+    ['slst', 1, 1],
+    ['slip\\s+stitch(?:es)?', 1, 1],
+    ['sc2tog', 1, 2],
+    ['hdc2tog', 1, 2],
+    ['dc2tog', 1, 2],
+    ['inv\\.?\\s*dec', 1, 2],
+    ['invdec', 1, 2],
+    ['decrease', 1, 2],
+    ['dec', 1, 2],
+    ['increase', 2, 1],
+    ['incr', 2, 1],
+    ['inc', 2, 1],
+    ['fsc', 1, 0],
+    ['dtr', 1, 1],
+    ['hdc', 1, 1],
+    ['tr(?:eble)?', 1, 1],
+    ['dc', 1, 1],
+    ['sc', 1, 1],
+    ['puff(?:\\s*st(?:itch)?)?', 1, 1],
+    ['bobble', 1, 1],
+    ['popcorn', 1, 1],
+    ['cluster', 1, 1],
+    ['shell', 1, 1],
+    ['skip', 0, 1],
+    ['sk', 0, 1]
+  ];
+
+  // One alternation, longest-first (the table above is already ordered).
+  var STITCH_ALT = '(?:' + VOCAB.map(function (v) { return v[0]; }).join('|') + ')';
+
+  function stitchInfo(word) {
+    var w = word.toLowerCase().replace(/\s+/g, ' ').trim();
+    for (var i = 0; i < VOCAB.length; i++) {
+      var re = new RegExp('^(?:' + VOCAB[i][0] + ')$', 'i');
+      if (re.test(w)) return { p: VOCAB[i][1], c: VOCAB[i][2] };
+    }
+    return null;
+  }
+
+  // =====================================================================
+  // 3. Row / setup markers
+  // =====================================================================
+
+  // "Row 1", "Row 1 (WS)", "Rows 3-4", "Rows 5 to 8", "Rows 5 & 6",
+  // "Rnd1", "Rounds 6-10", "R5", "R 5". The keyword must be followed by a
+  // number, so "Repeat"/"Rep" never match.
+  var KEYWORD_RE = new RegExp(
+    '^[-*\\u2022]?\\s*(?:rnds?|rounds?|rows?|r)\\.?\\s*' +
+    '(\\d+)\\s*(?:(?:-|to|&|and)\\s*(\\d+))?' +
+    '\\s*(?:\\((?:ws|rs|wrong side|right side)\\))?' +
+    '\\s*(?::|\\.|-|\\)|\\s|$)', 'i');
+
+  // Bare numbers need adjacent punctuation: "1.", "5:", "6..", "5-6.", "8-11.."
+  var BARE_RE = /^[-*\u2022]?\s*(\d+)(?:\s*-\s*(\d+))?(\.{1,3}|:|\))/;
+
+  var NEXT_ROW_RE = /^next\s+(?:rows?|rnds?|rounds?)\b\s*:?/i;
+
+  var SETUP_RE = /^(?:[a-z]+\s+)?(?:setup(?:\s+rows?)?|foundation(?:\s+rows?)?|base(?:\s+rows?)?|starting\s+row)\s*(?:\((?:ws|rs)\))?\s*:/i;
+
+  // Returns { row, rowEnd, rest } or null.
+  function detectMarker(line) {
+    var m = KEYWORD_RE.exec(line);
+    if (m) {
+      var r = num(m[1]);
+      return { row: r, rowEnd: m[2] !== undefined ? num(m[2]) : r, rest: line.slice(m[0].length) };
+    }
+    var b = BARE_RE.exec(line);
+    if (b) {
+      var r2 = num(b[1]);
+      return { row: r2, rowEnd: b[2] !== undefined ? num(b[2]) : r2, rest: line.slice(b[0].length) };
+    }
+    return null;
+  }
+
+  function detectNextRow(line) {
+    var m = NEXT_ROW_RE.exec(line);
+    if (!m) return null;
+    return { rest: line.slice(m[0].length) };
+  }
+
+  function detectSetup(line) {
+    var m = SETUP_RE.exec(line);
+    if (!m) return null;
+    return { rest: line.slice(m[0].length) };
+  }
+
+  // =====================================================================
+  // 4. Explicit stitch counts
+  // =====================================================================
+
+  // A multi-size list: "184 (208, 224)" or "58 (58, 62, 64, 66) (68, 72, 72, 74)".
+  // At least two numbers inside the first bracket, so "x6 (30)" is NOT a list.
+  var MULTI_SRC = '(\\d+)\\s*\\(\\s*(\\d+(?:\\s*,\\s*\\d+)+)\\s*\\)(?:\\s*\\(\\s*(\\d+(?:\\s*,\\s*\\d+)+)\\s*\\))?';
+  var MULTI_ANY = new RegExp(MULTI_SRC);
+  var MULTI_TAIL = new RegExp(MULTI_SRC + '\\s*(?:sts?|stitches?|sc)?\\s*[.,;!]*\\s*$', 'i');
+
+  function flattenMulti(m) {
+    var out = [num(m[1])];
+    var push = function (grp) {
+      if (!grp) return;
+      grp.split(',').forEach(function (x) { var n = num(x.trim()); if (n !== null) out.push(n); });
+    };
+    push(m[2]); push(m[3]);
+    return out;
+  }
+
+  function pickSize(sizes, size) {
+    if (!sizes || !sizes.length) return null;
+    var i = (typeof size === 'number' && size >= 0) ? size : 0;
+    if (i > sizes.length - 1) i = sizes.length - 1;
+    return sizes[i];
+  }
+
   var BRACKET_TAIL_RE = /[(\[]\s*([^()\[\]]*?)\s*[)\]]\s*[.,;!]*\s*$/;
-
+  var BRACKET_CONTENT_RE = /^(?:\d+\s*,\s*)*(\d+)\s*(?:(?:sts?|stitches?|sc|total)\s*)*$/i;
   var EQUALS_TAIL_RE = /=\s*(\d+)\s*(?:sts?|stitches?)?\s*[.,;!]*\s*$/i;
-
-  var DASH_TAIL_RE = /[-–—]\s*(\d+)\s*(?:sts?|stitches?)?\s*[.,;!]*\s*$/i;
-
+  var DASH_TAIL_RE = /-\s*(\d+)\s*(?:sts?|stitches?)?\s*[.,;!]*\s*$/i;
   var PLAIN_TAIL_RE = /(\d+)\s*(?:sts?|stitches?)\s*[.,;!]*\s*$/i;
+  var LABEL_TAIL_RE = /\b(?:st|stitch)\s*count\s*:?\s*(\d+)|\bsts?\s*:\s*(\d+)\s*$/i;
 
-  function detectStitches(trimmedLine) {
-    var bracket = BRACKET_TAIL_RE.exec(trimmedLine);
-    if (bracket) {
-      var inner = bracket[1].trim();
-      var contentMatch = BRACKET_CONTENT_RE.exec(inner);
-      if (contentMatch) {
-        return parseInt(contentMatch[1], 10);
+  // Returns { sizes:[..], start, end } (character range of the match) or null.
+  function findExplicit(line) {
+    // (1) after a pipe: first number / multi-size list there
+    var bar = line.indexOf('|');
+    if (bar >= 0) {
+      var after = line.slice(bar + 1);
+      var first = /\d+/.exec(after);
+      if (first) {
+        var tail = after.slice(first.index);
+        var mm = MULTI_ANY.exec(tail);
+        if (mm && mm.index === 0) {
+          return { sizes: flattenMulti(mm), start: bar, end: line.length };
+        }
+        return { sizes: [num(first[0])], start: bar, end: line.length };
       }
-      // Bracket present but not count-like (e.g. "(make 2)") — fall
-      // through and try the other trailing formats against the full line.
+      return null;
     }
 
-    var eq = EQUALS_TAIL_RE.exec(trimmedLine);
-    if (eq) return parseInt(eq[1], 10);
+    // (2) end of line
+    var m = MULTI_TAIL.exec(line);
+    if (m) return { sizes: flattenMulti(m), start: m.index, end: line.length };
 
-    var dash = DASH_TAIL_RE.exec(trimmedLine);
-    if (dash) return parseInt(dash[1], 10);
+    var br = BRACKET_TAIL_RE.exec(line);
+    if (br) {
+      var inner = BRACKET_CONTENT_RE.exec(br[1].trim());
+      if (inner) return { sizes: [num(inner[1])], start: br.index, end: line.length };
+    }
 
-    var plain = PLAIN_TAIL_RE.exec(trimmedLine);
-    if (plain) return parseInt(plain[1], 10);
+    var lab = LABEL_TAIL_RE.exec(line);
+    if (lab) return { sizes: [num(lab[1] || lab[2])], start: lab.index, end: line.length };
+
+    var eq = EQUALS_TAIL_RE.exec(line);
+    if (eq) return { sizes: [num(eq[1])], start: eq.index, end: line.length };
+
+    var da = DASH_TAIL_RE.exec(line);
+    if (da) return { sizes: [num(da[1])], start: da.index, end: line.length };
+
+    var pl = PLAIN_TAIL_RE.exec(line);
+    if (pl) return { sizes: [num(pl[1])], start: pl.index, end: line.length };
 
     return null;
   }
 
-  // ---------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------
+  // =====================================================================
+  // 5. Size names
+  // =====================================================================
 
-  function parse(text) {
-    if (text === null || text === undefined) return [];
-    var rawLines = String(text).split(/\r\n|\r|\n/);
-    var lines = [];
-    for (var i = 0; i < rawLines.length; i++) {
-      var raw = rawLines[i];
-      var trimmed = raw.trim();
-      var rowInfo = detectRow(trimmed);
-      var stitches = detectStitches(rowInfo.rest);
-      lines.push({
-        index: i,
-        text: raw,
-        row: rowInfo.row,
-        rowEnd: rowInfo.rowEnd,
-        stitches: stitches
+  var SIZE_TOKEN_RE = /^(?:x{0,3}s|s|m|l|x{0,3}l|\d+\s*x(?:l)?|\d+\s*x?s)$/i;
+  var SIZE_LINE_RE = /^([a-z0-9]{1,4})\s*\(\s*([^()]+?)\s*\)(?:\s*\(\s*([^()]+?)\s*\))?\s*[:.]?\s*$/i;
+
+  function detectSizes(text) {
+    if (text == null) return null;
+    var lines = String(text).split(/\r\n|\r|\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var t = trimLine(lines[i]);
+      var m = SIZE_LINE_RE.exec(t);
+      if (!m) continue;
+      var toks = [m[1]];
+      var ok = true;
+      [m[2], m[3]].forEach(function (grp) {
+        if (!grp) return;
+        grp.split(',').forEach(function (x) { toks.push(x.trim()); });
       });
+      var hasLetter = false;
+      for (var j = 0; j < toks.length; j++) {
+        var tk = toks[j];
+        if (!tk || !SIZE_TOKEN_RE.test(tk)) { ok = false; break; }
+        if (/[a-z]/i.test(tk)) hasLetter = true;
+      }
+      if (ok && hasLetter && toks.length >= 2) {
+        return toks.map(function (t2) { return t2.toUpperCase().replace(/\s+/g, ''); });
+      }
     }
+    return null;
+  }
+
+  // =====================================================================
+  // 6. evaluate() - computed stitch counts
+  // =====================================================================
+
+  // Segments that contribute nothing to the stitch count.
+  var ZERO_RES = [
+    /^ch(?:ain)?\s*\d*\s*(?:st|sts|ch|chs)?$/i,
+    /^ch(?:ain)?\s*\d+\b/i,
+    /^ch(?:ain)?\b\s*$/i,
+    /^turn\b/i, /^do\s*not\b/i, /^don't\b/i, /^join\b/i, /^fasten\s+off\b/i,
+    /^tie\s+off\b/i, /^flip\b/i, /^with\b/i, /^using\b/i, /^pull\b/i,
+    /^leave\b/i, /^leaving\b/i, /^cut\b/i, /^stuff\b/i, /^start\s+stuffing\b/i,
+    /^place\b/i, /^add\b/i, /^put\b/i, /^mark\b/i, /^before\b/i, /^after\b/i,
+    /^now\b/i, /^instead\b/i, /^this\b/i, /^these\b/i, /^colou?r\s+change\b/i,
+    /^change\s+to\b/i, /^switch\s+to\b/i, /^in\s+(?:yellow|black|white|mc|cc|a|b)\s*$/i,
+    /^(?:mr|magic\s*ring|magic\s*circle)\s*$/i,
+    // a stray stitch total, e.g. the "30" of a trailing "(30)" / "30 sts"
+    // (NOT "2sc", which is two single crochets)
+    /^\d+\s*(?:sts?|stitches?|total)?$/i
+  ];
+
+  var WORK_EVEN_RE = /^(?:work\s+even|work\s+in\s+(?:the\s+)?(?:established\s+)?pattern|continue\s+in\s+(?:the\s+)?established\s+pattern|work\s+in\s+pattern)/i;
+
+  var MR_RE1 = new RegExp('^(\\d+)\\s*(?:sc|sts?|dc|hdc|tr)?\\s*(?:in|into)\\s+(?:a\\s+|the\\s+)?(?:mr|magic\\s*ring|magic\\s*circle|magic\\s*loop|ring|circle)\\b', 'i');
+  var MR_RE2 = new RegExp('^(?:mr|magic\\s*ring|magic\\s*circle)\\s*(?:with\\s+)?(\\d+)', 'i');
+
+  var PREFIX_RE = /^(?:blo|flo|back\s+loop\s+only|front\s+loop\s+only|work\s+a|work|then|and)\s+/i;
+
+  var R_NEXT_N = new RegExp('^(?:(\\d+)\\s+)?(' + STITCH_ALT + ')\\s+(?:in|into)\\s+(?:each\\s+of\\s+)?(?:the\\s+)?next\\s+(\\d+)', 'i');
+  var R_FROM_HOOK = new RegExp('^(' + STITCH_ALT + ')\\s+(?:in|into)\\s+(?:the\\s+)?\\d+(?:st|nd|rd|th)\\s+(?:ch|chain|st|stitch)\\s+from', 'i');
+  var R_EACH = new RegExp('^(?:(\\d+)\\s*)?(' + STITCH_ALT + ')\\s*(?:sts?|stitch(?:es)?)?\\s*(?:in|into)?\\s*(?:each|every|all)\\b', 'i');
+  var R_AROUND = new RegExp('^(' + STITCH_ALT + ')\\s*(?:sts?|stitch(?:es)?)?\\s+(?:around|across|to\\s+end)\\b', 'i');
+  var R_N_IN_NEXT = new RegExp('^(\\d+)\\s*(' + STITCH_ALT + ')\\s+(?:in|into)\\s+(?:the\\s+)?(?:next|same)\\b', 'i');
+  var R_N_ST = new RegExp('^(\\d+)\\s*(' + STITCH_ALT + ')\\b', 'i');
+  var R_ST_N = new RegExp('^(' + STITCH_ALT + ')\\s+(\\d+)\\b', 'i');
+  var R_ST = new RegExp('^(' + STITCH_ALT + ')\\b', 'i');
+
+  // Parse one comma-separated segment.
+  // -> { p, c } | { fill:{p,c} } | { abs:n } | null
+  function parseSegment(seg) {
+    var s = seg.trim().replace(/\s+/g, ' ');
+    if (!s) return { p: 0, c: 0 };
+
+    var i, m;
+    for (i = 0; i < ZERO_RES.length; i++) if (ZERO_RES[i].test(s)) return { p: 0, c: 0 };
+    if (WORK_EVEN_RE.test(s)) return { fill: { p: 1, c: 1 } };
+
+    m = MR_RE1.exec(s); if (m) return { abs: num(m[1]) };
+    m = MR_RE2.exec(s); if (m) return { abs: num(m[1]) };
+
+    s = s.replace(PREFIX_RE, '');
+    for (i = 0; i < ZERO_RES.length; i++) if (ZERO_RES[i].test(s)) return { p: 0, c: 0 };
+    m = MR_RE1.exec(s); if (m) return { abs: num(m[1]) };
+
+    var st;
+    m = R_NEXT_N.exec(s);
+    if (m) {
+      st = stitchInfo(m[2]); if (!st) return null;
+      var lead = m[1] ? num(m[1]) : 1;
+      var n = num(m[3]);
+      return { p: n * lead * st.p, c: n * st.c };
+    }
+    m = R_FROM_HOOK.exec(s);
+    if (m) { st = stitchInfo(m[1]); return st ? { p: st.p, c: 0 } : null; }
+
+    m = R_EACH.exec(s);
+    if (m) {
+      st = stitchInfo(m[2]); if (!st) return null;
+      var lead2 = m[1] ? num(m[1]) : 1;
+      return { fill: { p: lead2 * st.p, c: st.c } };
+    }
+    m = R_AROUND.exec(s);
+    if (m) { st = stitchInfo(m[1]); return st ? { fill: { p: st.p, c: st.c } } : null; }
+
+    m = R_N_IN_NEXT.exec(s);
+    if (m) { st = stitchInfo(m[2]); return st ? { p: num(m[1]) * st.p, c: st.c } : null; }
+
+    m = R_N_ST.exec(s);
+    if (m) { st = stitchInfo(m[2]); return st ? { p: num(m[1]) * st.p, c: num(m[1]) * st.c } : null; }
+
+    m = R_ST_N.exec(s);
+    if (m) { st = stitchInfo(m[1]); return st ? { p: num(m[2]) * st.p, c: num(m[2]) * st.c } : null; }
+
+    m = R_ST.exec(s);
+    if (m) { st = stitchInfo(m[1]); return st ? { p: st.p, c: st.c } : null; }
+
+    return null;
+  }
+
+  // Split a string on , ; . and " and ", ignoring nothing (groups are handled
+  // by the scanner before this is called).
+  function splitSegments(s) {
+    return s.split(/[,;.]|\band\b/i);
+  }
+
+  // Sum a list of plain segments. -> { p, c, fill } | null
+  function sumSegments(list) {
+    var p = 0, c = 0, fill = null;
+    for (var i = 0; i < list.length; i++) {
+      var r = parseSegment(list[i]);
+      if (!r) return null;
+      if (r.abs !== undefined) return { abs: r.abs };
+      if (r.fill) { if (fill) return null; fill = r.fill; continue; }
+      p += r.p; c += r.c;
+    }
+    return { p: p, c: c, fill: fill };
+  }
+
+  var MULT_RE = /^\s*[,]?\s*(?:x|\u00d7|\*)\s*(\d+)|^\s*[,]?\s*(?:rep(?:eat)?(?:\s+from\s*\*)?\s*)?(\d+)\s*(more\s+)?times?\b|^\s*[,]?\s*(twice)\b/i;
+  var FILL_AROUND_RE = /^[\s,]*(?:rep(?:eat)?\s+)?(?:around|across|to\s+end)\b/i;
+
+  // Scan an instruction into items: plain text runs and bracket groups.
+  function scanItems(s) {
+    var items = [];
+    var buf = '';
+    var i = 0;
+    while (i < s.length) {
+      var ch = s.charAt(i);
+      var close = null;
+      if (ch === '(') close = ')';
+      else if (ch === '[') close = ']';
+      else if (ch === '*' && /[a-z0-9]/i.test(s.charAt(i + 1) || '')) close = '*';
+      if (!close) { buf += ch; i++; continue; }
+      var end = s.indexOf(close, i + 1);
+      if (end < 0) { buf += ch; i++; continue; }
+      var inner = s.slice(i + 1, end);
+      var after = s.slice(end + 1);
+      var mult = 1, consumed = 0, filled = false;
+      var mm = MULT_RE.exec(after);
+      if (mm) {
+        consumed = mm[0].length;
+        if (mm[4]) mult = 2;
+        else {
+          mult = num(mm[1] || mm[2]);
+          if (mm[3]) mult += 1; // "5 more times" = 6 total
+        }
+      } else {
+        var fm = FILL_AROUND_RE.exec(after);
+        if (fm) { filled = true; consumed = fm[0].length; }
+      }
+      if (buf.trim()) { items.push({ kind: 'text', text: buf }); }
+      buf = '';
+      items.push({ kind: 'group', text: inner, mult: mult, filled: filled });
+      i = end + 1 + consumed;
+    }
+    if (buf.trim()) items.push({ kind: 'text', text: buf });
+    return items;
+  }
+
+  // Fill `prev` stitches with a repeating group of (gp produced, gc consumed).
+  function fillGroup(gp, gc, prev) {
+    if (prev == null || gc <= 0) return null;
+    var groups = Math.floor(prev / gc);
+    var leftover = prev - groups * gc;
+    return groups * gp + leftover;
+  }
+
+  // Open-ended fills: the row says "keep going in the established pattern to
+  // the end of the row", so the count is simply the previous count. Token
+  // math is NOT attempted on the rest of the line (the bracketed stitch
+  // pattern of such a row - e.g. "[skip the next st, sc in next, work a puff
+  // st into the skipped st]" - is net-neutral, not literally countable).
+  var OPEN_FILL_RE = new RegExp(
+    '\\bwork\\s+across\\b' +
+    '|\\bwork\\s+(?:even\\s+)?in\\s+(?:the\\s+)?(?:established\\s+)?pattern\\b' +
+    '|\\bcontinue\\s+(?:working\\s+)?in\\s+(?:the\\s+)?(?:established\\s+)?pattern\\b' +
+    '|\\brep(?:eat)?\\s+from\\s*\\*\\s*(?:across|around|to\\s+(?:the\\s+)?end)\\b' +
+    '|\\bto\\s+(?:the\\s+)?end\\b', 'i');
+
+  function evaluate(instruction, prevCount) {
+    if (instruction == null) return null;
+    var prev = (typeof prevCount === 'number' && isFinite(prevCount)) ? prevCount : null;
+    var s = normDashes(String(instruction)).replace(/\u00a0/g, ' ');
+    s = fixTypos(s);
+
+    // Drop a leading row marker if the caller passed a whole line.
+    var mk = detectMarker(s.trim());
+    if (mk) s = mk.rest;
+    s = s.toLowerCase().trim();
+    if (!s) return null;
+
+    if (prev !== null && OPEN_FILL_RE.test(s)) return prev;
+
+    // "X, Y, repeat around" - the comma list before the marker is the group.
+    var repAround = /\b(?:rep(?:eat)?)\s+(?:around|across|to\s+end)\b/i.exec(s);
+    var tailFill = false;
+    if (repAround) { s = s.slice(0, repAround.index); tailFill = true; }
+
+    var items = scanItems(s);
+    if (!items.length) return null;
+
+    var total = 0, consumed = 0, fill = null, filledGroup = null;
+
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.kind === 'text') {
+        var r = sumSegments(splitSegments(it.text));
+        if (!r) return null;
+        if (r.abs !== undefined) return r.abs;
+        if (r.fill) { if (fill) return null; fill = r.fill; }
+        total += r.p; consumed += r.c;
+      } else {
+        var g = sumSegments(splitSegments(it.text));
+        if (!g || g.abs !== undefined || g.fill) {
+          // Un-parsable parenthetical with no multiplier: treat as commentary.
+          if (it.mult === 1 && !it.filled && (!g || !g.fill)) continue;
+          return null;
+        }
+        if (it.filled) {
+          if (filledGroup) return null;
+          filledGroup = g;
+        } else {
+          total += g.p * it.mult;
+          consumed += g.c * it.mult;
+        }
+      }
+    }
+
+    if (filledGroup) {
+      var rest = (prev == null) ? null : prev - consumed;
+      var got = fillGroup(filledGroup.p, filledGroup.c, rest);
+      return got == null ? null : total + got;
+    }
+
+    if (tailFill) {
+      if (total === 0 && consumed === 0) return null;
+      var rest2 = (prev == null) ? null : prev;
+      return fillGroup(total, consumed, rest2);
+    }
+
+    if (fill) {
+      if (prev == null) return null;
+      var remaining = prev - consumed;
+      if (remaining < 0) return null;
+      if (fill.c <= 0) return null;
+      var whole = Math.floor(remaining / fill.c);
+      var left = remaining - whole * fill.c;
+      return total + whole * fill.p + left;
+    }
+
+    if (total === 0 && consumed === 0) return null;
+    return total;
+  }
+
+  // =====================================================================
+  // 7. Headers, notes, repeat suggestions
+  // =====================================================================
+
+  // Words that are never a part on their own; stripped from the end of a
+  // header ("BODY EYES" -> "Body"). If nothing is left the line is a note.
+  var NON_PART = ['eyes', 'eye', 'assembly', 'notes', 'note', 'materials',
+    'terminology', 'abbreviations', 'finishing', 'tips', 'tip', 'gauge',
+    'sizing', 'sizes', 'size', 'instructions', 'instruction', 'or', 'and',
+    'supplies', 'difficulty', 'pattern'];
+
+  var MAKE_RES = [
+    /^(.*?)\s*\(\s*(?:make\s*)?x?\s*(\d+)\s*\)\s*$/i,
+    /^(.*?)\s*-\s*make\s*(\d+)\s*$/i,
+    /^(.*?)\s+x\s*(\d+)\s*$/i,
+    /^(.*?)\s+make\s*(\d+)\s*$/i
+  ];
+
+  var ALLCAPS_RE = /^[A-Z][A-Z '&\/-]*$/;
+  var TITLE_RE = /^([A-Z][a-z'-]*)(\s+([A-Z][a-z'-]*|of|the|and|in|a|for|to|with))*$/;
+
+  // -> { name, makeCount } | 'note' | null
+  function headerInfo(t) {
+    if (!t || t.length > 40) return null;
+    var s = t.replace(/\s*:\s*$/, '').trim();
+    if (!s) return null;
+    var makeCount = 1;
+    for (var i = 0; i < MAKE_RES.length; i++) {
+      var m = MAKE_RES[i].exec(s);
+      if (m && m[1].trim()) { s = m[1].trim(); makeCount = num(m[2]) || 1; break; }
+    }
+    if (!/^[A-Za-z][A-Za-z '&\/-]*$/.test(s)) return null;
+    if (!ALLCAPS_RE.test(s) && !TITLE_RE.test(s)) return null;
+
+    // strip trailing non-part words
+    var words = s.split(/\s+/);
+    while (words.length && NON_PART.indexOf(words[words.length - 1].toLowerCase()) >= 0) {
+      words.pop();
+    }
+    if (!words.length) return 'note';
+    var name = words.join(' ');
+    if (name.replace(/[^A-Za-z]/g, '').length < 3) return 'note';
+    return { name: titleCase(name), makeCount: makeCount };
+  }
+
+  // "Stem: With MC, ch 40. Sl st in 2nd ch from hook..." -> header + row 1
+  var NAME_ROW_RE = /^([A-Za-z][A-Za-z '&\/-]{1,38}):\s*(\S.*)$/;
+  var INSTR_START_RE = new RegExp('^(?:with|using|work|join|fsc|magic|mr\\b|ch(?:ain)?\\s*\\d|ch(?:ain)?\\b|\\d+\\s*(?:' + STITCH_ALT + ')\\b|' + STITCH_ALT + '\\b)', 'i');
+
+  function nameRowInfo(t) {
+    var m = NAME_ROW_RE.exec(t);
+    if (!m) return null;
+    var h = headerInfo(m[1] + ':');
+    if (!h || h === 'note') return null;
+    if (!INSTR_START_RE.test(m[2])) return null;
+    return { name: h.name, makeCount: h.makeCount, rest: m[2], prefixLen: t.length - m[2].length };
+  }
+
+  var NOTE_KEY_RE = /^(?:colou?r\s+change|change\s+to|switch\s+to|add\b|stuff\b|start\s+stuffing|tie\s+off|fasten\s+off|sl\s*st|slst|join\b|place\b|insert\b|attach\b|sew\b|embroider\b|do\s*not\b|don't\b|put\b|with\b|cut\b|leave\b|leaving\b|finish\b|close\b|in\s+(?:yellow|black|white|grey|gray|brown|pink|red|blue|green|mc|cc)\s*[.,]?\s*$)/i;
+
+  function isAttachableNote(t) {
+    return !!t && t.length <= 80 && NOTE_KEY_RE.test(t);
+  }
+
+  // --- repeat lines -----------------------------------------------------
+
+  var REPEAT_RE = /\b(?:rep|repeat)\s+(?:rows?|rnds?|rounds?)\s*(\d+)\s*(?:-|to|&|and)\s*(\d+)/i;
+  var WORD_NUM = { two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+
+  function detectRepeat(t, size) {
+    var m = REPEAT_RE.exec(t);
+    if (!m) return null;
+    var startRow = num(m[1]), endRow = num(m[2]);
+    var after = t.slice(m.index + m[0].length);
+    var untilRows = null, times = null;
+
+    var u = /until\b([^.]*)/i.exec(after);
+    if (u) {
+      var seg = u[1];
+      var ml = MULTI_ANY.exec(seg);
+      if (ml) untilRows = pickSize(flattenMulti(ml), size);
+      else {
+        var n1 = /(\d+)/.exec(seg);
+        if (n1) untilRows = num(n1[1]);
+      }
+    }
+    var tm = /\bx\s*(\d+)\b/i.exec(after);
+    if (tm) times = num(tm[1]);
+    if (times === null) {
+      var tw = /\b(\d+|two|three|four|five|six|seven|eight|nine|ten|twice)\s*(more\s+)?times?\b/i.exec(after);
+      if (tw) {
+        var v = /^\d+$/.test(tw[1]) ? num(tw[1]) : WORD_NUM[tw[1].toLowerCase()];
+        if (v) times = v + (tw[2] ? 1 : 0);
+      }
+    }
+    return { startRow: startRow, endRow: endRow, times: times, untilRows: untilRows };
+  }
+
+  // =====================================================================
+  // 8. parse() and friends
+  // =====================================================================
+
+  function makeLine(i, raw) {
+    return {
+      index: i, text: raw, kind: 'note',
+      row: null, rowEnd: null, section: 0,
+      stitches: null, sizes: null, computed: null,
+      count: null, countSource: null, notes: []
+    };
+  }
+
+  // A two-column PDF can wrap a row onto the next line, leaving its stitch
+  // count stranded there ("...turn." / "| 18 sts ..."). If the line right
+  // after a row is plain continuation text carrying a count, use it.
+  function continuationCount(raws, i) {
+    if (i + 1 >= raws.length) return null;
+    var t = trimLine(raws[i + 1]);
+    if (!t) return null;
+    if (detectMarker(t) || detectRepeat(t, 0) || detectNextRow(t) || detectSetup(t) || nameRowInfo(t)) return null;
+    var h = headerInfo(t);
+    if (h && h !== 'note') return null;
+    return findExplicit(t);
+  }
+
+  function parse(text, opts) {
+    if (text === null || text === undefined) return [];
+    var size = (opts && typeof opts.size === 'number') ? opts.size : 0;
+    var raws = String(text).split(/\r\n|\r|\n/);
+    var lines = [];
+    var sections = [];
+    var multiSize = false;
+    var suggestion = null;
+    var suggestionSection = null;
+
+    function openSection(name, makeCount, startLine) {
+      // A header before any content just names the section we are already in
+      // (so a text that starts with its own header keeps that as section 0).
+      if (sections.length && !sections[sections.length - 1].hasContent) {
+        var last = sections[sections.length - 1];
+        last.name = name || '';
+        last.makeCount = makeCount || 1;
+        last.startLine = startLine;
+        return last;
+      }
+      var sec = {
+        index: sections.length, name: name || '', makeCount: makeCount || 1,
+        startLine: startLine, endLine: startLine, rows: 0, maxRow: null,
+        lastRow: null, prevCount: null, hasRow: false, hasContent: false
+      };
+      sections.push(sec);
+      return sec;
+    }
+
+    var cur = openSection('', 1, 0);
+
+    for (var i = 0; i < raws.length; i++) {
+      var raw = raws[i];
+      var t = trimLine(raw);
+      var L = makeLine(i, raw);
+      lines.push(L);
+      cur.endLine = i;
+
+      if (!t) { L.section = cur.index; continue; }
+
+      var prefixLen = 0;
+      var isRow = false, isSetup = false;
+
+      var mk = detectMarker(t);
+      var rep = mk ? null : detectRepeat(t, size);
+      var nx = (!mk && !rep) ? detectNextRow(t) : null;
+      var sp = (!mk && !rep && !nx) ? detectSetup(t) : null;
+      var nr = (!mk && !rep && !nx && !sp) ? nameRowInfo(t) : null;
+
+      if (mk) {
+        // section restart: a row number that goes back
+        if (cur.hasRow && cur.lastRow !== null && mk.row <= cur.lastRow) {
+          // A restart is usually the same piece continuing (a second panel,
+          // or a de-interleaving artefact), so carry the running count over.
+          var carry = cur.prevCount;
+          cur = openSection('', 1, i);
+          cur.prevCount = carry;
+        }
+        L.row = mk.row; L.rowEnd = mk.rowEnd; L.kind = 'row';
+        prefixLen = t.length - mk.rest.length;
+        isRow = true;
+      } else if (rep) {
+        L.kind = 'repeat';
+        if (!suggestion) { suggestion = rep; suggestionSection = cur.index; }
+      } else if (nx) {
+        var base = (cur.lastRow === null) ? 0 : cur.lastRow;
+        L.row = base + 1; L.rowEnd = L.row; L.kind = 'row';
+        prefixLen = t.length - nx.rest.length;
+        isRow = true;
+      } else if (sp) {
+        L.row = 0; L.rowEnd = 0; L.kind = 'setup';
+        prefixLen = t.length - sp.rest.length;
+        isSetup = true;
+      } else if (nr) {
+        cur = openSection(nr.name, nr.makeCount, i);
+        L.row = 1; L.rowEnd = 1; L.kind = 'row';
+        prefixLen = nr.prefixLen;
+        isRow = true;
+      } else {
+        var h = headerInfo(t);
+        if (h && h !== 'note') {
+          cur = openSection(h.name, h.makeCount, i);
+          L.kind = 'header';
+          L.section = cur.index;
+          cur.hasContent = true;
+          continue;
+        }
+        L.kind = 'note';
+      }
+
+      L.section = cur.index;
+      cur.hasContent = true;
+
+      // --- explicit count -----------------------------------------------
+      var expl = (L.kind === 'header') ? null : findExplicit(t.slice(prefixLen));
+      var body = t;
+      if (expl) {
+        expl.start += prefixLen; expl.end += prefixLen;
+        L.sizes = expl.sizes.length > 1 ? expl.sizes : null;
+        L.stitches = pickSize(expl.sizes, size);
+        if (expl.sizes.length > 1) multiSize = true;
+        if (expl.start > prefixLen) body = t.slice(0, expl.start);
+      }
+
+      if ((isRow || isSetup) && L.stitches === null) {
+        var cont = continuationCount(raws, i);
+        if (cont) {
+          L.sizes = cont.sizes.length > 1 ? cont.sizes : null;
+          L.stitches = pickSize(cont.sizes, size);
+          if (cont.sizes.length > 1) multiSize = true;
+        }
+      }
+
+      // A counted line before row 1 of the section is a setup/foundation row.
+      if (!isRow && !isSetup && L.kind === 'note' && L.stitches !== null && !cur.hasRow) {
+        L.kind = 'setup'; L.row = 0; L.rowEnd = 0; isSetup = true;
+      }
+
+      // --- computed count -----------------------------------------------
+      if (isRow || isSetup) {
+        var instr = body.slice(Math.min(prefixLen, body.length));
+        L.computed = evaluate(instr, cur.prevCount);
+        L.count = (L.stitches !== null) ? L.stitches : L.computed;
+        L.countSource = (L.stitches !== null) ? 'explicit' : (L.computed !== null ? 'computed' : null);
+        if (L.count !== null) cur.prevCount = L.count;
+        if (isRow) {
+          cur.hasRow = true;
+          cur.lastRow = L.rowEnd;
+          cur.rows += (L.rowEnd - L.row + 1);
+          if (cur.maxRow === null || L.rowEnd > cur.maxRow) cur.maxRow = L.rowEnd;
+        }
+      } else if (L.stitches !== null) {
+        L.count = L.stitches;
+        L.countSource = 'explicit';
+      }
+    }
+
+    // --- attach notes ---------------------------------------------------
+    for (var j = 0; j < lines.length; j++) {
+      var n = lines[j];
+      if (n.kind !== 'note') continue;
+      var tx = trimLine(n.text);
+      if (!isAttachableNote(tx)) continue;
+      var target = null, k;
+      for (k = j + 1; k < lines.length; k++) {
+        if (lines[k].section !== n.section) break;
+        if (lines[k].kind === 'row' || lines[k].kind === 'setup') { target = lines[k]; break; }
+      }
+      if (!target) {
+        for (k = j - 1; k >= 0; k--) {
+          if (lines[k].section !== n.section) break;
+          if (lines[k].kind === 'row' || lines[k].kind === 'setup') { target = lines[k]; break; }
+        }
+      }
+      if (target) target.notes.push(tx);
+    }
+
+    lines.meta = {
+      sections: sections.map(function (s) {
+        return {
+          index: s.index, name: s.name, makeCount: s.makeCount,
+          startLine: s.startLine, endLine: s.endLine, rows: s.rows, maxRow: s.maxRow
+        };
+      }),
+      sizes: detectSizes(text),
+      multiSize: multiSize,
+      suggestion: (suggestionSection === 0 || suggestionSection === null) ? suggestion : null,
+      anySuggestion: suggestion
+    };
     return lines;
   }
 
-  function inRange(line, rowNumber) {
+  function inRange(line, row) {
     if (!line || line.row === null || line.row === undefined) return false;
-    var end = (line.rowEnd !== null && line.rowEnd !== undefined) ? line.rowEnd : line.row;
-    return rowNumber >= line.row && rowNumber <= end;
+    var end = (line.rowEnd === null || line.rowEnd === undefined) ? line.row : line.rowEnd;
+    return row >= line.row && row <= end;
   }
 
-  function targetFor(lines, rowNumber) {
-    if (!lines) return null;
-    for (var i = 0; i < lines.length; i++) {
-      var l = lines[i];
-      if (inRange(l, rowNumber) && l.stitches !== null && l.stitches !== undefined) {
-        return l.stitches;
-      }
+  function targetFor(lines, row) {
+    if (!lines || !lines.length) return null;
+    var i, l;
+    for (i = 0; i < lines.length; i++) {
+      l = lines[i];
+      if (l.section === 0 && l.row >= 1 && inRange(l, row) && l.count !== null && l.count !== undefined) return l.count;
+    }
+    for (i = 0; i < lines.length; i++) {
+      l = lines[i];
+      if (l.row >= 1 && inRange(l, row) && l.count !== null && l.count !== undefined) return l.count;
     }
     return null;
   }
 
-  function lineFor(lines, rowNumber) {
-    if (!lines) return null;
-    for (var i = 0; i < lines.length; i++) {
-      var l = lines[i];
-      if (inRange(l, rowNumber)) return l;
+  function lineFor(lines, row) {
+    if (!lines || !lines.length) return null;
+    var i, l;
+    for (i = 0; i < lines.length; i++) {
+      l = lines[i];
+      if (l.section === 0 && l.row >= 1 && inRange(l, row)) return l;
+    }
+    for (i = 0; i < lines.length; i++) {
+      l = lines[i];
+      if (l.row >= 1 && inRange(l, row)) return l;
     }
     return null;
   }
 
   function summary(lines) {
-    var rows = 0;
-    var maxRow = null;
-    var hasTargets = false;
+    var rows = 0, maxRow = null, hasTargets = false, anyExplicit = false, anyComputed = false;
+    var meta = (lines && lines.meta) ? lines.meta : null;
     if (lines) {
       for (var i = 0; i < lines.length; i++) {
         var l = lines[i];
-        if (l.row !== null && l.row !== undefined) {
-          var end = (l.rowEnd !== null && l.rowEnd !== undefined) ? l.rowEnd : l.row;
+        if (l.row !== null && l.row !== undefined && l.row >= 1) {
+          var end = (l.rowEnd === null || l.rowEnd === undefined) ? l.row : l.rowEnd;
           rows += (end - l.row + 1);
           if (maxRow === null || end > maxRow) maxRow = end;
         }
-        if (l.stitches !== null && l.stitches !== undefined) hasTargets = true;
+        if (l.count !== null && l.count !== undefined) hasTargets = true;
+        if (l.stitches !== null && l.stitches !== undefined) anyExplicit = true;
+        if (l.computed !== null && l.computed !== undefined) anyComputed = true;
       }
     }
-    return { rows: rows, maxRow: maxRow, hasTargets: hasTargets };
+    var secs = meta ? meta.sections.filter(function (s) { return s.rows > 0; }) : [];
+    if (meta && !secs.length && meta.sections.length) secs = [meta.sections[0]];
+    var sug = meta && meta.suggestion ? meta.suggestion : null;
+    return {
+      rows: rows,
+      maxRow: maxRow,
+      hasTargets: hasTargets,
+      computedOnly: !anyExplicit && anyComputed,
+      sizes: meta ? meta.sizes : null,
+      multiSize: meta ? meta.multiSize : false,
+      sections: secs,
+      suggestions: {
+        targetRows: sug ? sug.untilRows : null,
+        repeat: sug ? { startRow: sug.startRow, endRow: sug.endRow, times: sug.times, untilRows: sug.untilRows } : null
+      }
+    };
+  }
+
+  function splitSections(text) {
+    if (text === null || text === undefined) return [];
+    var raws = String(text).split(/\r\n|\r|\n/);
+    var lines = parse(text);
+    var secs = lines.meta ? lines.meta.sections : [];
+    var out = secs.filter(function (s) { return s.rows > 0; }).map(function (s) {
+      return {
+        name: s.name,
+        makeCount: s.makeCount,
+        text: raws.slice(s.startLine, s.endLine + 1).join('\n').replace(/\s+$/, '')
+      };
+    });
+    if (!out.length) {
+      return [{ name: '', makeCount: 1, text: String(text) }];
+    }
+    return out;
   }
 
   window.Patterns = {
     parse: parse,
     targetFor: targetFor,
     lineFor: lineFor,
-    summary: summary
+    summary: summary,
+    splitSections: splitSections,
+    detectSizes: detectSizes,
+    evaluate: evaluate
   };
 
 })();

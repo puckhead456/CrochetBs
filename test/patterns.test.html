@@ -68,6 +68,13 @@ function assertTrue(cond, label) {
   log(!!cond, label);
 }
 
+// v2: summary() grew extra keys, so most summary assertions check a subset.
+function assertSubset(actual, expected, label) {
+  var sub = {};
+  Object.keys(expected).forEach(function (k) { sub[k] = actual ? actual[k] : undefined; });
+  assertEqual(sub, expected, label);
+}
+
 // -----------------------------------------------------------------------
 group('Amigurumi pattern (rounds, ranges, counts)');
 // -----------------------------------------------------------------------
@@ -102,7 +109,7 @@ assertEqual(window.Patterns.lineFor(ami, 7).text, 'Rnd 6-10: sc around (30)', 'a
 assertEqual(window.Patterns.lineFor(ami, 12), null, 'ami lineFor(12) == null');
 
 var amiSummary = window.Patterns.summary(ami);
-assertEqual(amiSummary, { rows: 11, maxRow: 11, hasTargets: true }, 'ami summary: rows=11 (range counted), maxRow=11, hasTargets=true');
+assertSubset(amiSummary, { rows: 11, maxRow: 11, hasTargets: true }, 'ami summary: rows=11 (range counted), maxRow=11, hasTargets=true');
 
 // -----------------------------------------------------------------------
 group('Row-based blanket pattern (no stitch counts)');
@@ -118,7 +125,7 @@ assertEqual(blanket.map(function (l) { return l.row; }), [1, 2, 3], 'blanket: ro
 assertTrue(blanket.every(function (l) { return l.stitches === null; }), 'blanket: no stitch counts found on any line');
 
 var blanketSummary = window.Patterns.summary(blanket);
-assertEqual(blanketSummary, { rows: 3, maxRow: 3, hasTargets: false }, 'blanket summary: rows=3, maxRow=3, hasTargets=false');
+assertSubset(blanketSummary, { rows: 3, maxRow: 3, hasTargets: false }, 'blanket summary: rows=3, maxRow=3, hasTargets=false');
 assertEqual(window.Patterns.targetFor(blanket, 2), null, 'blanket targetFor(2) == null (row exists but no stitches)');
 assertTrue(window.Patterns.lineFor(blanket, 2) !== null, 'blanket lineFor(2) still resolves the line even without stitches');
 assertEqual(window.Patterns.lineFor(blanket, 2).row, 2, 'blanket lineFor(2).row == 2');
@@ -248,10 +255,268 @@ group('summary() on empty / no-marker input');
 // -----------------------------------------------------------------------
 
 var noMarkers = window.Patterns.parse('Just some notes\nMore notes, no rows here');
-assertEqual(window.Patterns.summary(noMarkers), { rows: 0, maxRow: null, hasTargets: false }, 'summary with no row markers at all: rows=0, maxRow=null, hasTargets=false');
-assertEqual(window.Patterns.summary([]), { rows: 0, maxRow: null, hasTargets: false }, 'summary of empty array');
+assertSubset(window.Patterns.summary(noMarkers), { rows: 0, maxRow: null, hasTargets: false }, 'summary with no row markers at all: rows=0, maxRow=null, hasTargets=false');
+assertSubset(window.Patterns.summary([]), { rows: 0, maxRow: null, hasTargets: false }, 'summary of empty array');
+assertEqual(window.Patterns.summary([]).sections, [], 'summary of empty array: no sections');
+assertEqual(window.Patterns.summary([]).suggestions, { targetRows: null, repeat: null }, 'summary of empty array: empty suggestions');
 assertEqual(window.Patterns.targetFor([], 1), null, 'targetFor on empty array -> null');
 assertEqual(window.Patterns.lineFor([], 1), null, 'lineFor on empty array -> null');
+
+// =======================================================================
+// v2 tests. All pattern snippets below are synthetic (written for this
+// suite); they only mimic the SHAPE of real PDF text.
+// =======================================================================
+
+var P = window.Patterns;
+function pick(line, keys) {
+  var o = {};
+  keys.forEach(function (k) { o[k] = line ? line[k] : undefined; });
+  return o;
+}
+function rowOf(lines, n) {
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (l.row !== null && l.row >= 1 && n >= l.row && n <= l.rowEnd) return l;
+  }
+  return null;
+}
+
+// -----------------------------------------------------------------------
+group('v2: Line shape');
+// -----------------------------------------------------------------------
+
+var shape = P.parse('Rnd 1: 6 sc in magic ring (6)')[0];
+assertEqual(pick(shape, ['index', 'kind', 'row', 'rowEnd', 'section', 'stitches', 'sizes', 'computed', 'count', 'countSource', 'notes']),
+  { index: 0, kind: 'row', row: 1, rowEnd: 1, section: 0, stitches: 6, sizes: null, computed: 6, count: 6, countSource: 'explicit', notes: [] },
+  'v2 Line has kind/section/computed/count/countSource/notes');
+assertEqual(P.parse('BODY')[0].kind, 'header', 'a header line has kind "header"');
+assertEqual(P.parse('Just some chatter about hooks and yarn weight')[0].kind, 'note', 'plain prose has kind "note"');
+assertEqual(P.parse('Repeat Rows 5-8 six times')[0].kind, 'repeat', 'a repeat line has kind "repeat"');
+assertEqual(pick(P.parse('Setup: Ch 20, sc in each ch across, turn.')[0], ['kind', 'row', 'rowEnd']), { kind: 'setup', row: 0, rowEnd: 0 }, '"Setup:" -> kind setup, row 0');
+assertEqual(pick(P.parse('Foundation row: Ch 20, sc in each ch across.')[0], ['kind', 'row']), { kind: 'setup', row: 0 }, '"Foundation row:" -> kind setup, row 0');
+
+// -----------------------------------------------------------------------
+group('v2: markers - Next Row, ranges with "to" and "&", (WS)/(RS)');
+// -----------------------------------------------------------------------
+
+assertEqual(pick(P.parse('Rows 5 to 8: sc across')[0], ['row', 'rowEnd']), { row: 5, rowEnd: 8 }, '"Rows 5 to 8" range');
+assertEqual(pick(P.parse('Rows 5 & 6: sc across')[0], ['row', 'rowEnd']), { row: 5, rowEnd: 6 }, '"Rows 5 & 6" range');
+assertEqual(P.parse('Row 7 (WS): ch 1, sc across')[0].row, 7, '"Row 7 (WS):" -> row 7');
+assertEqual(P.parse('ROW 7: ch 1, sc across')[0].row, 7, 'upper-case "ROW 7"');
+assertEqual(pick(P.parse('5-6. Sc in each st')[0], ['row', 'rowEnd']), { row: 5, rowEnd: 6 }, 'bare range "5-6."');
+assertEqual(pick(P.parse('8-11..sc in each st')[0], ['row', 'rowEnd']), { row: 8, rowEnd: 11 }, 'PDF typo range "8-11.."');
+assertEqual(P.parse('6..Inc, 4sc, repeat around')[0].row, 6, 'PDF typo "6..Inc"');
+assertEqual(P.parse('2 sl sts on the edge')[0].row, null, '"2 sl sts ..." is not a row marker');
+assertEqual(P.parse('5 sc in next st')[0].row, null, '"5 sc in next st" is not a row marker');
+var nextRows = P.parse('Row 1: sc across\nRows 2-3: sc across\nNext Row: sc across');
+assertEqual(pick(nextRows[2], ['kind', 'row', 'rowEnd']), { kind: 'row', row: 4, rowEnd: 4 }, '"Next Row:" after rows 2-3 -> row 4');
+
+// -----------------------------------------------------------------------
+group('v2: evaluate()');
+// -----------------------------------------------------------------------
+
+assertEqual(P.evaluate('6 sc in magic ring', null), 6, 'evaluate: 6 sc in magic ring -> 6');
+assertEqual(P.evaluate('5sc in mr', null), 5, 'evaluate: 5sc in mr -> 5');
+assertEqual(P.evaluate('6st in mr', null), 6, 'evaluate: 6st in mr -> 6');
+assertEqual(P.evaluate('MR with 8 sc', null), 8, 'evaluate: MR with 8 sc -> 8');
+assertEqual(P.evaluate('Inc in each st', 5), 10, 'evaluate: inc in each st -> prev x2');
+assertEqual(P.evaluate('Inc in eact st', 6), 12, 'evaluate: tolerates the "eact" typo');
+assertEqual(P.evaluate('Sc in each st', 15), 15, 'evaluate: sc in each st -> prev');
+assertEqual(P.evaluate('sc in each st around', 30), 30, 'evaluate: sc in each st around -> prev');
+assertEqual(P.evaluate('blo sc in each st across', 184), 184, 'evaluate: blo sc in each st across -> prev');
+assertEqual(P.evaluate('work even', 40), 40, 'evaluate: work even -> prev');
+assertEqual(P.evaluate('Dec in each st', 10), 5, 'evaluate: dec in each st -> prev/2');
+assertEqual(P.evaluate('Dec all around', 12), 6, 'evaluate: dec all around -> prev/2');
+assertEqual(P.evaluate('Inc, sc, repeat around', 10), 15, 'evaluate: "Inc, sc, repeat around" fills the group');
+assertEqual(P.evaluate('Inc, 4sc, repeat around', 30), 36, 'evaluate: "Inc, 4sc, repeat around" from 30 -> 36');
+assertEqual(P.evaluate('Dec, 5sc, repeat around', 42), 36, 'evaluate: "Dec, 5sc, repeat around" from 42 -> 36');
+assertEqual(P.evaluate('Inc, 5sc, repeat around Eyes placement can vary slightly', 36), 42, 'evaluate: trailing commentary after "repeat around" is ignored');
+assertEqual(P.evaluate('*sc, inc* rep around', 12), 18, 'evaluate: *...* group + "rep around" -> 18');
+assertEqual(P.evaluate('(sc 3, inc) x6', 24), 30, 'evaluate: (sc 3, inc) x6 -> 30');
+assertEqual(P.evaluate('(sc 3, inc) x6 (30)', 24), 30, 'evaluate: a trailing "(30)" count is not counted twice');
+assertEqual(P.evaluate('Ch1, turn (flip project), (Inc, sc) x5, inc', 12), 17, 'evaluate: (Inc, sc) x5, inc -> 17');
+assertEqual(P.evaluate('Ch1, turn, (inc, 2sc) x5, inc, sc', 17), 23, 'evaluate: (inc, 2sc) x5, inc, sc -> 23');
+assertEqual(P.evaluate('Ch1, turn, (inc, 3sc) x5, inc, 2sc', 23), 29, 'evaluate: (inc, 3sc) x5, inc, 2sc -> 29');
+assertEqual(P.evaluate('Ch1, turn, (inc, 4sc) x5, inx, 3sc', 29), 35, 'evaluate: tolerates the "inx" typo -> 35');
+assertEqual(P.evaluate('(sc, inc) repeat 6 times', 12), 18, 'evaluate: "repeat 6 times" multiplier');
+assertEqual(P.evaluate('(sc, inc) rep from * 5 more times', 12), 18, 'evaluate: "5 more times" = 6 repeats');
+assertEqual(P.evaluate('sc 6', null), 6, 'evaluate: "sc 6" -> 6');
+assertEqual(P.evaluate('6sc', null), 6, 'evaluate: "6sc" -> 6');
+assertEqual(P.evaluate('2 sc in each st', 6), 12, 'evaluate: "2 sc in each st" -> prev x2');
+assertEqual(P.evaluate('Sk 2 sl sts, blo sc 7, turn.', 7), 7, 'evaluate: "Sk 2 sl sts, blo sc 7, turn." -> 7');
+assertEqual(P.evaluate('mumble mumble not crochet at all', 30), null, 'evaluate: unknown text -> null (never guess)');
+assertEqual(P.evaluate('sc in each st', null), null, 'evaluate: fill rule with no previous count -> null');
+
+// -----------------------------------------------------------------------
+group('v2: open-ended fills inherit the previous count');
+// -----------------------------------------------------------------------
+
+var puffRow = 'Row 3: Ch 1, blo sc 10, [skip the next st, sc in next, work a puff st into the skipped st] work across until the last 10 sts, blo sc 10, turn.';
+assertEqual(P.evaluate(puffRow, 184), 184, 'puff row with "work across until the last 10 sts" -> previous count');
+assertEqual(P.evaluate('Ch 1, [skip the next st, sc in next, work a puff st into the skipped st] work across, turn.', 18), 18, '"... work across, turn." -> previous count');
+assertEqual(P.evaluate('ch 1, *sc, puff; rep from * across', 40), 40, '"rep from * across" -> previous count');
+assertEqual(P.evaluate('ch 1, *sc, puff; rep from * around', 40), 40, '"rep from * around" -> previous count');
+assertEqual(P.evaluate('Ch 1, work in pattern across, turn.', 88), 88, '"work in pattern across" -> previous count');
+assertEqual(P.evaluate('Continue in the established pattern, turn.', 88), 88, '"continue in the established pattern" -> previous count');
+assertEqual(P.evaluate('Ch 1, sc in each st to end, turn.', 24), 24, '"to end" -> previous count');
+assertEqual(P.evaluate(puffRow, null), null, 'an open-ended fill with no previous count stays null');
+assertEqual(P.evaluate('(sc, inc) rep from * 5 more times', 12), 18, '"rep from * 5 more times" is still a counted repeat, not an open-ended fill');
+assertEqual(P.evaluate('Inc, 5sc, repeat around', 36), 42, '"repeat around" still fills the group rather than inheriting');
+
+var puffPiece = P.parse(
+  'Row 1: Ch 1, blo sc in each st across, turn. | 184 (208, 224) sts\n' +
+  puffRow + '\n' +
+  'Rows 4-5: Ch 1, blo sc in each st across, turn.');
+assertEqual(pick(rowOf(puffPiece, 3), ['count', 'countSource']), { count: 184, countSource: 'computed' }, 'the puff row computes 184 inside a parsed piece');
+assertEqual(rowOf(puffPiece, 5).count, 184, 'the rows after it keep counting from 184');
+
+// a restarted (unnamed) section carries the running count over
+var carry = P.parse(
+  'Row 1: Ch 1, blo sc in each st across, turn. | 88 sts\n' +
+  'Row 2: Ch 1, blo sc in each st across, turn.\n' +
+  'Rows 1-2: Ch 1, blo sc in each st across, turn.');
+assertEqual(carry[2].section, 1, 'the repeated row numbers start a new section');
+assertEqual(carry[2].count, 88, 'a restarted section inherits the previous count');
+
+// the "Name: instructions" one-liner (a whole piece on one line)
+var stemText = 'Stem: With MC, ch 40. Sl st in 2nd ch from hook. Sl st in each of next 11 ch. ' +
+  '1 sc in each of next 9 ch. 1 hdc in each of next 6 ch. 1 dc in each of next 6 ch. ' +
+  '1 tr in each of next 6 ch. Fasten off.';
+var stem = P.parse(stemText);
+var stemSum = P.summary(stem);
+assertEqual(stemSum.rows, 1, 'stem one-liner: exactly one row');
+assertEqual(pick(stem[0], ['kind', 'row', 'rowEnd', 'count', 'countSource']), { kind: 'row', row: 1, rowEnd: 1, count: 39, countSource: 'computed' }, 'stem one-liner: row 1, computed 39 (1 + 11 + 9 + 6 + 6 + 6)');
+assertEqual(stemSum.sections.length && stemSum.sections[0].name, 'Stem', 'stem one-liner: section named "Stem"');
+
+// -----------------------------------------------------------------------
+group('v2: computed counts through a whole piece');
+// -----------------------------------------------------------------------
+
+var beeish =
+  'BODY\n' +
+  '1. 5sc in mr\n' +
+  '2. Inc in eact st\n' +
+  'Colour change to black\n' +
+  '3. Inc, sc, repeat around\n' +
+  '4. Sc in each st\n' +
+  'Add safety eyes and start stuffing\n' +
+  '5. Dec, sc, repeat around\n' +
+  '6..Dec in each st\n' +
+  'Tie off, finish stuffing, and close\n' +
+  'WINGS (make 2)\n' +
+  '1. 6sc in mr\n' +
+  '2. Inc in each st';
+
+var bee = P.parse(beeish);
+var beeSum = P.summary(bee);
+assertEqual([1, 2, 3, 4, 5, 6].map(function (n) { return rowOf(bee, n).count; }), [5, 10, 15, 15, 10, 5], 'bee-ish body: computed 5,10,15,15,10,5');
+assertTrue(bee.filter(function (l) { return l.kind === 'row' && l.section === 0; }).every(function (l) { return l.countSource === 'computed'; }), 'bee-ish body: every count is "computed"');
+assertEqual(beeSum.computedOnly, true, 'bee-ish: summary.computedOnly is true');
+assertEqual(beeSum.hasTargets, true, 'bee-ish: hasTargets is true for computed-only counts (v2 change)');
+assertEqual(rowOf(bee, 3).notes, ['Colour change to black'], 'note "Colour change to black" attaches to the NEXT row');
+assertEqual(rowOf(bee, 5).notes, ['Add safety eyes and start stuffing'], 'note attaches forward to row 5');
+assertEqual(rowOf(bee, 6).notes, ['Tie off, finish stuffing, and close'], 'a trailing note with no next row attaches BACK to row 6');
+assertEqual(P.targetFor(bee, 3), 15, 'targetFor uses computed counts of section 0');
+assertEqual(P.lineFor(bee, 4).row, 4, 'lineFor finds the section-0 row');
+assertEqual(beeSum.sections.map(function (s) { return s.name + '/' + s.makeCount; }), ['Body/1', 'Wings/2'], 'summary.sections: Body x1, Wings x2');
+
+var beeSecs = P.splitSections(beeish);
+assertEqual(beeSecs.map(function (s) { return s.name; }), ['Body', 'Wings'], 'splitSections names');
+assertEqual(beeSecs[1].makeCount, 2, 'splitSections makeCount from "WINGS (make 2)"');
+assertTrue(beeSecs[1].text.indexOf('1. 6sc in mr') >= 0, 'splitSections slices the right text');
+
+assertEqual(P.splitSections('Legs x4\n1. 6 sc in mr\n2. inc around (12)')[0].makeCount, 4, '"Legs x4" -> makeCount 4');
+assertEqual(P.splitSections('Ears - make 2\n1. 6 sc in mr\n2. inc around (12)')[0].makeCount, 2, '"Ears - make 2" -> makeCount 2');
+assertEqual(P.splitSections('Leg (x4)\n1. 6 sc in mr\n2. inc around (12)')[0].name, 'Leg', '"Leg (x4)" -> name Leg');
+assertEqual(P.splitSections('some notes with no headers at all'), [{ name: '', makeCount: 1, text: 'some notes with no headers at all' }], 'splitSections with no headers -> one unnamed section');
+
+// EYES / ASSEMBLY blocks are notes, not sections
+var eyesText = 'BODY EYES\nIn yellow\n1. 6sc in mr\n2. Inc in each st\nASSEMBLY\nSew the wings on';
+var eyes = P.parse(eyesText);
+assertEqual(P.summary(eyes).sections.map(function (s) { return s.name; }), ['Body'], '"BODY EYES" -> one section named Body; ASSEMBLY is not a section');
+assertEqual(eyes[4].kind, 'note', '"ASSEMBLY" line is a note');
+
+// a row number going backwards starts a new section
+var restart = P.parse('1. 6 sc in mr\n2. inc around\n1. 6 sc in mr\n2. inc around');
+assertEqual([restart[0].section, restart[2].section], [0, 1], 'a restarting row number opens a new (unnamed) section');
+
+// -----------------------------------------------------------------------
+group('v2: sizes, explicit counts after a pipe, suggestions');
+// -----------------------------------------------------------------------
+
+var sizesText = 'Sizing\nXS (S, M, L, 1X) (2X, 3X, 4X, 5X)\nFinished Bust Measurements:\n32 (37.25, 42.5, 48, 48) (53.25, 58.5, 64, 69.25)"';
+assertEqual(P.detectSizes(sizesText), ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X', '5X'], 'detectSizes finds the size list (and ignores the measurement line)');
+assertEqual(P.detectSizes('Rnd 1: sc around (6)'), null, 'detectSizes -> null when there is no size line');
+
+var cardish =
+  'First Section\n' +
+  'XS (S, M, L) (1X, 2X)\n' +
+  'Setup: Ch 20, sc in each ch across, turn.\n' +
+  'Row 1 (WS): Ch 1, blo sc in each st across, turn. | 18 (22, 26) sts; the number of puff sts is 8 (10, 12)\n' +
+  'Rows 2-3: Ch 1, blo sc in each st across, turn.\n' +
+  'Next Row: Ch 1, blo sc in each st across, turn.\n' +
+  'Repeats: Repeat Rows 2-3 until there are a total of 25 (29, 33) Rows.\n' +
+  'Sleeve Cuff\n' +
+  'Row 1: Ch 8, sc in second chain from hook and across remaining chs, sl st 2 sts on the sleeve edge, turn. | 7 sc, 2 sl sts\n' +
+  'Row 2: Sk 2 sl sts, blo sc 7, turn.\n' +
+  'Next Rows: Rep Rows 1-2 around the sleeve edge.';
+
+var card0 = P.parse(cardish);
+var cardSum0 = P.summary(card0);
+assertEqual(cardSum0.sizes, ['XS', 'S', 'M', 'L', '1X', '2X'], 'summary.sizes from the size line');
+assertEqual(cardSum0.multiSize, true, 'summary.multiSize true when a multi-size count was seen');
+assertEqual(pick(rowOf(card0, 1), ['stitches', 'sizes', 'count', 'countSource']), { stitches: 18, sizes: [18, 22, 26], count: 18, countSource: 'explicit' }, 'count after a pipe: "| 18 (22, 26) sts; ..." -> 18 (size 0)');
+assertEqual(rowOf(P.parse(cardish, { size: 1 }), 1).stitches, 22, 'size 1 -> 22');
+assertEqual(rowOf(P.parse(cardish, { size: 2 }), 1).stitches, 26, 'size 2 -> 26');
+assertEqual(rowOf(P.parse(cardish, { size: 9 }), 1).stitches, 26, 'size beyond the list is clamped to the last value');
+assertEqual(pick(rowOf(card0, 2), ['row', 'rowEnd', 'count', 'countSource']), { row: 2, rowEnd: 3, count: 18, countSource: 'computed' }, 'Rows 2-3 fill from the previous count');
+assertEqual(rowOf(card0, 4).row, 4, '"Next Row:" becomes row 4');
+assertEqual(cardSum0.suggestions.repeat, { startRow: 2, endRow: 3, times: null, untilRows: 25 }, 'repeat suggestion {2,3,null,25}');
+assertEqual(cardSum0.suggestions.targetRows, 25, 'targetRows 25 (size 0)');
+assertEqual(P.summary(P.parse(cardish, { size: 2 })).suggestions.targetRows, 33, 'targetRows 33 (size 2)');
+assertEqual(cardSum0.sections.map(function (s) { return s.name; }), ['First Section', 'Sleeve Cuff'], 'Title Case headers become sections');
+
+var cuffLines = P.parse(P.splitSections(cardish)[1].text);
+assertEqual(rowOf(cuffLines, 1).stitches, 7, '"| 7 sc, 2 sl sts" -> 7');
+assertEqual(pick(rowOf(cuffLines, 2), ['count', 'countSource']), { count: 7, countSource: 'computed' }, '"Sk 2 sl sts, blo sc 7, turn." -> computed 7');
+assertEqual(cuffLines[cuffLines.length - 1].kind, 'repeat', '"Next Rows: Rep Rows 1-2 ..." is a repeat line, not row 3');
+assertEqual(P.summary(cuffLines).suggestions.repeat, { startRow: 1, endRow: 2, times: null, untilRows: null }, '"Rep Rows 1-2" -> times/untilRows null');
+
+assertEqual(P.summary(P.parse('Row 1: sc across\nRepeat Rows 1-4 until you have at least 14 total rows')).suggestions,
+  { targetRows: 14, repeat: { startRow: 1, endRow: 4, times: null, untilRows: 14 } }, '"until you have at least 14 total rows"');
+assertEqual(P.summary(P.parse('Row 1: sc across\nRepeat Rows 5-8 six times')).suggestions.repeat,
+  { startRow: 5, endRow: 8, times: 6, untilRows: null }, '"Repeat Rows 5-8 six times" -> times 6');
+assertEqual(P.summary(P.parse('Row 1: sc across\nRepeat Rows 5-8 x6')).suggestions.repeat.times, 6, '"Repeat Rows 5-8 x6" -> times 6');
+assertEqual(P.summary(P.parse('Row 1: sc across\nRepeat Rows 5-8 6 more times')).suggestions.repeat.times, 7, '"6 more times" -> times 7');
+assertEqual(P.parse('Rnd 6-10: sc around (30)')[0].kind, 'row', '"Rnd 6-10" is a range, not a repeat');
+
+// -----------------------------------------------------------------------
+group('v2: explicit count formats (multi-size, trailing, no unit)');
+// -----------------------------------------------------------------------
+
+function stc(line) { return P.parse(line)[0].stitches; }
+assertEqual(stc('Row 1: Ch 1, blo sc 88 (100, 108), Fsc 96 (108, 116), turn. 184 (208, 224)'), 184, 'trailing multi-size with no unit wins over numbers inside the instruction');
+assertEqual(P.parse('Row 1: sc across. 184 (208, 224)')[0].sizes, [184, 208, 224], 'sizes are kept for multi-size counts');
+assertEqual(stc('Rnd 1: sc around = 184 (208, 224) sts'), 184, '"= 184 (208, 224) sts"');
+assertEqual(stc('Rnd 1: ... | 58 (58, 62, 64, 66) (68, 72, 72, 74) sts'), 58, 'two bracket groups after a pipe');
+assertEqual(P.parse('Rnd 1: ... | 58 (58, 62, 64, 66) (68, 72, 72, 74) sts', { size: 8 })[0].stitches, 74, 'two bracket groups, size 8 -> 74');
+assertEqual(stc('Rnd 5: (sc 3, inc) x6 (30)'), 30, 'a "x6" multiplier is not mistaken for a multi-size list');
+assertEqual(P.parse('Rnd 4: (sc 2, inc) x6 (24)\nRnd 5: (sc 3, inc) x6 (30)')[1].computed, 30, 'computed still runs when an explicit count exists');
+assertEqual(P.parse('Rnd 4: (sc 2, inc) x6 (24)\nRnd 5: (sc 3, inc) x6 (30)')[1].countSource, 'explicit', 'count prefers the explicit value');
+assertEqual(stc('Row 2: sc in each st across, turn.'), null, 'a row with no count -> stitches null');
+assertEqual(P.parse('Rnd 3: (sc 1, inc) x6 (18)\nRound 4: sc in each st around')[1].count, 18, '"Round 4: sc in each st around" -> previous count');
+assertEqual(P.parse('Row 6: sc in each st across (20)\nRow 7 (RS): ch 1, sc across')[1].count, 20, '"Row 7 (RS): ch 1, sc across" -> previous count');
+assertEqual(P.parse('Rnd 1: 6 sc in mr (6)\nRnd 2: 2 sc in each st (12)')[1].computed, 12, '"2 sc in each st" computes 12 from 6');
+assertEqual(P.parse('Rnd 2: inc around (12)\nR3 - *sc, inc* rep around')[1].count, 18, '"R3 - *sc, inc* rep around" -> 18 from 12');
+
+// a stranded count on the wrapped continuation line (two-column PDF bleed)
+var wrapped = P.parse('Row 1 (WS): Ch 19, sc in the 2nd ch from the\nhook and in each ch across, turn. | 18 sts');
+assertEqual(pick(wrapped[0], ['row', 'stitches', 'countSource']), { row: 1, stitches: 18, countSource: 'explicit' }, 'a count stranded on the next line is picked up by the row above');
+
+// a counted line before row 1 becomes setup row 0 and feeds the first rows
+var foundation = P.parse('First Section\nFoundation Single Crochet 184 (208, 224) sts.\nRows 1-2: Ch 1, blo sc in each st across, turn.');
+assertEqual(pick(foundation[1], ['kind', 'row', 'count']), { kind: 'setup', row: 0, count: 184 }, 'a counted line before row 1 -> kind setup, row 0');
+assertEqual(pick(rowOf(foundation, 1), ['count', 'countSource']), { count: 184, countSource: 'computed' }, 'row 1 fills from the setup count');
 
 // -----------------------------------------------------------------------
 var summaryEl = document.getElementById('summary');
