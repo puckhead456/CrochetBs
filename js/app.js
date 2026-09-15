@@ -162,6 +162,7 @@
     els.toasts = $('#toasts');
 
     els.homeEmpty = $('#home-empty');
+    els.welcome = $('#welcome-card');
     els.homeList = $('#home-list');
     els.finishedWrap = $('#home-finished');
     els.finishedToggle = $('#finished-toggle');
@@ -264,6 +265,22 @@
     inner.appendChild(body);
 
     var result;
+    var torndown = false;
+
+    /**
+     * Unhook the sheet. Runs from the dialog's `close` event, and also
+     * straight after `dlg.close()` — a backgrounded tab can sit on that event
+     * for a long time, and a sheet left in the DOM breaks later queries.
+     */
+    function teardown() {
+      if (torndown) return;
+      torndown = true;
+      var i = openSheets.indexOf(api);
+      if (i >= 0) openSheets.splice(i, 1);
+      if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+      if (opts.onClose) opts.onClose(result);
+    }
+
     var api = {
       dialog: dlg,
       body: body,
@@ -273,8 +290,9 @@
         try {
           dlg.close();
         } catch (e) {
-          dlg.remove();
+          /* not open (or no <dialog> support) — teardown still handles it */
         }
+        teardown();
       }
     };
 
@@ -282,6 +300,8 @@
       var foot = el('div', 'sheet-foot');
       opts.footer.forEach(function (f) {
         var b = button(f.cls || 'btn', f.text);
+        // A stable hook the guided tours can spotlight.
+        if (f.tour) b.setAttribute('data-tour', f.tour);
         on(b, 'click', function () {
           f.onClick(api);
         });
@@ -299,12 +319,7 @@
     on(dlg, 'click', function (e) {
       if (e.target === dlg) api.close();
     });
-    on(dlg, 'close', function () {
-      var i = openSheets.indexOf(api);
-      if (i >= 0) openSheets.splice(i, 1);
-      if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
-      if (opts.onClose) opts.onClose(result);
-    });
+    on(dlg, 'close', teardown);
     // Escape: <dialog> fires cancel then close — nothing extra needed.
 
     if (opts.build) opts.build(body, api);
@@ -674,6 +689,10 @@
     done.sort(function (a, b) { return (b.finishedAt || b.updatedAt) - (a.finishedAt || a.updatedAt); });
 
     els.homeEmpty.hidden = all.length > 0;
+    // First ever visit: offer the guided tour from the empty state.
+    if (els.welcome) {
+      els.welcome.hidden = !(all.length === 0 && !Store.settings().welcomed && tourAvailable());
+    }
 
     clear(els.homeList);
     live.forEach(function (p) {
@@ -1901,8 +1920,10 @@
       build: function (body) {
         area = textArea(initialText || '', 'mono', 'Paste the instructions from your PDF');
         area.setAttribute('aria-label', 'Pattern text to import');
+        area.setAttribute('data-tour', 'import-text');
         body.appendChild(field('Pattern text', area, 'Paste the instructions from your PDF.'));
         list = el('div', 'imp-list');
+        list.setAttribute('data-tour', 'import-list');
         body.appendChild(field('Sections detected', list));
         on(area, 'input', debounce(refresh, 200));
         refresh();
@@ -1911,6 +1932,7 @@
         {
           text: 'Put it all in ' + (activeName.length > 16 ? activeName.slice(0, 15) + '…' : activeName),
           cls: 'btn ghost wrap-label',
+          tour: 'import-all',
           onClick: function (api) {
             if (!area.value.trim()) {
               toast('Nothing to import yet');
@@ -1929,6 +1951,7 @@
         {
           text: 'Create parts',
           cls: 'btn primary',
+          tour: 'import-create',
           onClick: function (api) {
             var secs = checkedSections();
             if (!secs.length) {
@@ -2087,6 +2110,7 @@
       build: function (body) {
         var count = el('p', 'muted');
         var list = el('div', 'list');
+        list.setAttribute('data-tour', 'checklist-list');
         var addRow = el('div', 'row-flex');
         var input = textInput('', 'Sew the tail on');
         var addBtn = button('btn primary', 'Add');
@@ -2189,6 +2213,7 @@
           var tpl = sourceTemplate();
           if (tpl) {
             var reload = button('btn block', '↻ Reload from “' + tpl.name + '”');
+            reload.setAttribute('data-tour', 'checklist-reload');
             on(reload, 'click', function () {
               confirmSheet({
                 title: 'Reload the checklist?',
@@ -2441,7 +2466,8 @@
           openTemplateEditor({ draft: draft });
         }
       },
-      { icon: '📤', label: 'Export backup', run: function () { exportBackup(); } }
+      { icon: '📤', label: 'Export backup', run: function () { exportBackup(); } },
+      { icon: '❓', label: 'Show me around', run: function () { startTour('counter'); } }
     ];
     openSheet({
       title: p.name,
@@ -2568,6 +2594,151 @@
     return card;
   }
 
+  /* ================================================================== *
+   * 20b. Guided help (tours + FAQ)
+   * ================================================================== */
+
+  var FAQ = [
+    {
+      q: 'How do I get a pattern into the app?',
+      a: 'Open a project, tap ⋯ and choose Import pattern. Paste the instructions straight out of your ' +
+        'PDF — headings like BODY or “Wings (make 2)” turn into parts, and Create parts sets them all up. ' +
+        'If the pattern is one piece, use “Put it all in …” instead and it goes into the part you are on.'
+    },
+    {
+      q: 'What does the ≈ in front of a stitch count mean?',
+      a: 'It means nobody wrote that number down. Your pattern line had no count in brackets, so we worked ' +
+        'it out from the instruction itself (6 sc in a magic ring, then inc ×6, and so on). A plain number ' +
+        'with no ≈ was read straight off the page and is the one to trust.'
+    },
+    {
+      q: 'How do repeats work?',
+      a: 'Open the part editor (tap the tab you are already on), turn on Enable repeat and set From, To and ' +
+        'Times. The counter then shows “Repeat 2 of 6 · round 3 of 4”, and the pattern line follows the ' +
+        'repeated rows instead of running off the end of your pattern.'
+    },
+    {
+      q: 'Can it buzz at a particular stitch?',
+      a: 'Yes — the 🔔 Alerts button at the bottom of a project. Type the stitch numbers you care about ' +
+        '(say 40, 80) and it flashes and buzzes there on every row. Good for increases you keep missing.'
+    },
+    {
+      q: 'What does group size 0 do?',
+      a: 'It turns grouping off completely. Normally the readout counts you through groups of ten — ' +
+        '“Group 2 of 3 · stitch 4 of 10” — with a little buzz at each boundary. Set the group size to 0 in ' +
+        'the project editor and you just get the plain stitch number, no groups and no boundary buzz.'
+    },
+    {
+      q: 'Where are my projects saved, and how do I back them up?',
+      a: 'Everything lives on this device, in this browser — nothing is uploaded anywhere. Use Download ' +
+        'backup above for a JSON file you can keep or move to another phone, and Import backup to read one ' +
+        'back in. Imports merge by project id, so the imported copy wins.'
+    }
+  ];
+
+  function tourAvailable() {
+    return !!(window.Tour && typeof window.Tour.start === 'function');
+  }
+
+  /** Start a tour by id, closing any sheets that are in the way first. */
+  function startTour(id, opts) {
+    if (!tourAvailable()) {
+      toast('Tours are unavailable right now');
+      return Promise.resolve(null);
+    }
+    return window.Tour.start(id, opts || {});
+  }
+
+  /** First run: home → counter (sample project) → offer the import tour. */
+  function startWelcomeTour() {
+    Store.setSetting('welcomed', true);
+    renderHome();
+    if (!tourAvailable()) return;
+    var ctx = {};
+    window.Tour.start('home', { ctx: ctx })
+      .then(function () {
+        return window.Tour.start('counter', { ctx: ctx, sampleOffer: false });
+      })
+      .then(function () {
+        if (!Store.projects().length) return null;
+        return confirmSheet({
+          title: 'One more?',
+          message: 'Most patterns come as a PDF. Want the 30-second tour of pasting one in?',
+          cancelText: 'Not now',
+          confirmText: 'Show me'
+        }).then(function (ok) {
+          return ok ? window.Tour.start('import', { ctx: ctx }) : null;
+        });
+      })
+      .then(function () {
+        // The sample project's send-off, saved until the very end of the chain.
+        if (!ctx.sampleId || !Store.project(ctx.sampleId)) return;
+        return confirmSheet({
+          title: 'Keep “' + Store.project(ctx.sampleId).name + '”?',
+          message: 'We made that project just for the tour. Keep it to practise on, or bin it and start clean.',
+          cancelText: 'Delete it',
+          confirmText: 'Keep it'
+        }).then(function (keep) {
+          if (keep) return;
+          Store.setActiveProject(null);
+          Store.deleteProject(ctx.sampleId);
+          Store.clearUndo();
+          render();
+          toast('Sample project removed');
+        });
+      })
+      .catch(noop);
+  }
+
+  function helpSection() {
+    var wrap = el('div', 'field');
+    wrap.setAttribute('data-tour', 'settings-help');
+    wrap.appendChild(el('div', 'field-label', 'Help & tours'));
+
+    if (!tourAvailable()) {
+      wrap.appendChild(el('p', 'muted', 'Guided tours are unavailable right now.'));
+    } else {
+      var listWrap = el('div', 'help-list');
+      window.Tour.list().forEach(function (t) {
+        var row = el('div', 'help-item');
+        var main = el('div', 'help-main');
+        main.appendChild(el('div', 'help-name', t.title));
+        main.appendChild(el('div', 'help-blurb', t.blurb));
+        row.appendChild(main);
+        if (t.seen) {
+          var tick = el('span', 'help-seen', '✓');
+          tick.setAttribute('aria-label', 'Already seen');
+          row.appendChild(tick);
+        }
+        var go = button('btn', t.seen ? 'Replay' : 'Start');
+        go.setAttribute('aria-label', (t.seen ? 'Replay' : 'Start') + ' the tour: ' + t.title);
+        on(go, 'click', function () {
+          closeAllSheets();
+          startTour(t.id);
+        });
+        row.appendChild(go);
+        listWrap.appendChild(row);
+      });
+      wrap.appendChild(listWrap);
+      wrap.appendChild(
+        el('div', 'field-hint', 'A tour dims the screen and points at things — you can still tap them.')
+      );
+    }
+
+    var faqWrap = el('div', 'faq-list');
+    FAQ.forEach(function (item) {
+      var d = document.createElement('details');
+      d.className = 'faq';
+      var s = document.createElement('summary');
+      s.textContent = item.q;
+      d.appendChild(s);
+      d.appendChild(el('p', null, item.a));
+      faqWrap.appendChild(d);
+    });
+    wrap.appendChild(faqWrap);
+    return wrap;
+  }
+
   function openSettingsSheet() {
     openSheet({
       title: 'Settings',
@@ -2655,11 +2826,13 @@
 
         /* ---- Templates ---- */
         var tplField = el('div', 'field');
+        tplField.setAttribute('data-tour', 'settings-templates');
         tplField.appendChild(el('div', 'field-label', 'Templates'));
         var tplList = el('div', 'list');
         renderTemplateList(tplList);
         tplField.appendChild(tplList);
         var newTpl = button('btn block', '＋ New template');
+        newTpl.setAttribute('data-tour', 'settings-new-template');
         on(newTpl, 'click', function () {
           openTemplateEditor({
             onSaved: function () {
@@ -2688,6 +2861,9 @@
         backup.appendChild(el('div', 'field-hint', 'Backups merge by project id — imported projects win.'));
         body.appendChild(backup);
 
+        /* ---- Help & tours ---- */
+        body.appendChild(helpSection());
+
         /* ---- About ---- */
         var about = el('div', 'field');
         about.appendChild(el('div', 'field-label', 'About'));
@@ -2709,6 +2885,15 @@
       });
     });
     on($('#btn-settings'), 'click', openSettingsSheet);
+
+    // First-run welcome card
+    on($('#welcome-start'), 'click', startWelcomeTour);
+    on($('#welcome-dismiss'), 'click', function () {
+      Store.setSetting('welcomed', true);
+      renderHome();
+      toast('No problem — the tours live in Settings.');
+    });
+
     on(els.finishedToggle, 'click', function () {
       finishedOpen = !finishedOpen;
       renderHome();
@@ -2867,7 +3052,12 @@
     toast: toast,
     confirmSheet: confirmSheet,
     openSheet: openSheet,
+    closeAllSheets: closeAllSheets,
     openImportSheet: openImportSheet,
+    openSettingsSheet: openSettingsSheet,
+    openChecklistSheet: openChecklistSheet,
+    startTour: startTour,
+    startWelcomeTour: startWelcomeTour,
     applyTheme: applyTheme,
     version: APP_VERSION
   };

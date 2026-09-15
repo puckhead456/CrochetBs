@@ -200,6 +200,26 @@ UI:
 - Project overflow menu: **Save as template** → opens the Template editor pre-filled from `Store.templateFromProject`, so the user can tweak and save.
 - Empty state text for user templates section when none: "Your saved templates will show up here."
 
+## Guided help (tours)
+
+New file `js/tour.js` → `window.Tour`. A spotlight walkthrough engine plus declarative tour definitions. No dependencies.
+
+```js
+Tour.start(tourId, opts?)      // opts.onDone(); runs steps; Promise resolves when finished or skipped
+Tour.stop()
+Tour.list() → [{ id, title, blurb, seen: boolean }]
+Tour.hasSeen(id) / Tour.markSeen(id)   // persisted via Store.settings().toursSeen (array of ids)
+```
+Engine: a fixed full-screen overlay that dims the page with a **cut-out** around the target element (use an SVG mask or four dim panels around the target rect; the target stays fully visible and CLICKABLE), an outline ring (`--accent-2`, 3px, `--radius-sm`) around it, and a small card (`--surface`, theme fonts) positioned below the target, or above when there is no room, clamped to the viewport with 12px margins; on phones the card may span the width. Card contains: step counter "2 of 7", title, 1–3 sentences, an optional "Try it: tap the button" hint, and buttons Back / Next (or "Done" on the last step) and a Skip link. Steps declare `{ target: selector|function → Element|null, title, body, tryIt?: string, before?: async fn (e.g. open a sheet, switch screen), placement?: 'auto'|'top'|'bottom', advanceOn?: 'click' }`. When `advanceOn: 'click'`, a real click/tap on the target advances the tour (and the app handles the click normally). Before showing a step: run `before`, scroll the target into view (`scrollIntoView({block:'center'})`), wait one frame, measure. Reposition on resize/scroll (throttled). A step whose target is missing is skipped. Escape = skip. Focus management: card gets focus; Tab stays within card. Respects `prefers-reduced-motion` (no animated spotlight moves).
+
+Tours (write the copy warmly, short sentences, second person; every step teaches one thing):
+- `home` "Around the home screen": New project button → project cards (what the summary line shows) → settings gear (themes live here) → finished shelf (mention statuses).
+- `counter` "Counting a project" (requires a project open; if none exists, `before` creates a sample project "Tour sheep" from the Sheep template with a short amigurumi pattern on Body, e.g. `Rnd 1: 6 sc in MR (6)\nRnd 2: inc x6 (12)\nRnd 3: (sc, inc) x6 (18)\nRnd 4: (sc 2, inc) x6 (24)\nRnd 5-8: sc around (24)\nRnd 9: (sc 2, dec) x6 (18)`, opens it, and the final step offers "Delete the sample project" / "Keep it"): part tabs (tap to switch, tap again to edit; make-2 shows 0/2) → row counter and ± (rows vs rounds) → stitch button (`tryIt`: tap it three times; `advanceOn` not used, Next) → group readout and target (what `13 / 24` and `≈` mean, group size 0 = off) → pattern line (tap for the whole pattern, jump to a row) → Undo → Awake (keep screen on) → Alerts (buzz at stitch N) → Placing (placement notes) → timer chip → overflow menu (Import pattern, Checklist, Notes, History, Status, Save as template).
+- `import` "Importing a pattern": `before` opens the Import pattern sheet for the open project (or the sample): textarea (paste straight from the PDF, mess is fine) → sections list (each becomes a part; edit names; make counts detected) → Create parts vs Put it all in → then closes the sheet; final step says where the pattern shows up and that ≈ means computed.
+- `templates` "Templates and checklists": `before` opens Settings → Templates section (edit built-ins, reset, create your own) → then the project checklist (rename, reorder, reload from template) if a project is open.
+
+Entry points (App): a **Help** item in the Settings sheet ("Help & tours" section: list from `Tour.list()` with ✓ for seen and a Replay/Start button each, plus 6 short FAQ answers: importing a pattern, what ≈ means, repeats, stitch alerts, group size 0, backups) and a **?** item in the project overflow menu that starts `counter`. First run: when the home screen is empty on first ever load (settings flag `welcomed` false), show a small welcome card in the empty state: "New here? Take the 2-minute tour" → starts `home` then chains into `counter` (sample project) then offers `import`. Set `welcomed` true regardless of choice. `Store.settings()` gains `toursSeen: string[]` and `welcomed: boolean` (migrate on load).
+
 ## Themes contract
 
 `css/themes.css` defines, for each `html[data-theme="<id>"]`, ALL of these variables. `css/app.css` uses only these (plus its own layout numbers). Defaults for `:root` (no attribute) must equal `stardew-spring`.
