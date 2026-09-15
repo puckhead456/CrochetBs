@@ -1189,6 +1189,84 @@ textarea.mono {
 .imp-name { min-height: 40px; background: var(--surface); }
 .imp-meta { font-size: 12px; color: var(--text-muted); font-weight: 700; }
 
+/* Templates: list + editor */
+.tpl-edit-link { display: flex; justify-content: flex-start; margin-top: -2px; }
+.tpl-edit-link .linkish { min-height: 36px; padding: 0 2px; }
+
+.tpl-item { text-align: left; }
+.tpl-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tpl-item-name { font-weight: 800; word-break: break-word; }
+.tpl-item-sub { font-size: 12px; color: var(--text-muted); }
+.tpl-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+}
+
+.tpl-parts-edit,
+.tpl-check-edit { display: flex; flex-direction: column; gap: 8px; }
+
+.tpl-part-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.tpl-part-top,
+.tpl-part-bot,
+.tpl-check-row { display: flex; align-items: center; gap: 8px; }
+.tpl-part-name { flex: 1 1 auto; min-width: 0; background: var(--surface); }
+.tpl-part-bot .stepper { flex: 1 1 auto; min-width: 0; }
+.tpl-part-bot .stepper button { width: 42px; height: 42px; }
+.tpl-check-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.tpl-mini-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-muted);
+}
+.tpl-mini {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+}
+.tpl-mini[disabled] { opacity: 0.35; }
+
+/* Checklist item controls */
+.item-text-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  padding: 6px 2px;
+  min-height: 40px;
+}
+.item-edit { flex: 1 1 auto; min-width: 0; min-height: 40px; }
+.item-move {
+  flex: 0 0 auto;
+  min-width: 34px;
+  min-height: 40px;
+  color: var(--text-muted);
+  background: none;
+  font-size: 13px;
+}
+.item-move[disabled] { opacity: 0.3; }
+
 .danger-zone {
   margin-top: 4px;
   padding-top: 12px;

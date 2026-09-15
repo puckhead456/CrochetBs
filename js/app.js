@@ -432,8 +432,10 @@
   function segmented(options, current, onPick) {
     var wrap = el('div', 'seg');
     var value = current;
+    var buttons = {};
     options.forEach(function (o) {
       var b = button(value === o.id ? 'on' : null, o.label);
+      buttons[o.id] = b;
       on(b, 'click', function () {
         value = o.id;
         Array.prototype.forEach.call(wrap.children, function (c) { c.classList.remove('on'); });
@@ -442,7 +444,16 @@
       });
       wrap.appendChild(b);
     });
-    return { node: wrap, get: function () { return value; } };
+    return {
+      node: wrap,
+      get: function () { return value; },
+      set: function (id) {
+        if (!buttons[id]) return;
+        value = id;
+        Array.prototype.forEach.call(wrap.children, function (c) { c.classList.remove('on'); });
+        buttons[id].classList.add('on');
+      }
+    };
   }
 
   function switchRow(labelText, subText, checked, onToggle) {
@@ -467,8 +478,10 @@
   function emojiGrid(current, onPick) {
     var grid = el('div', 'emoji-grid');
     var value = current;
+    var buttons = {};
     EMOJI.forEach(function (e) {
       var b = button('emoji-btn' + (e === value ? ' on' : ''), e, 'Emoji ' + e);
+      buttons[e] = b;
       on(b, 'click', function () {
         value = e;
         Array.prototype.forEach.call(grid.children, function (c) { c.classList.remove('on'); });
@@ -477,7 +490,16 @@
       });
       grid.appendChild(b);
     });
-    return { node: grid, get: function () { return value; } };
+    return {
+      node: grid,
+      get: function () { return value; },
+      set: function (e) {
+        if (!e) return;
+        value = e;
+        Array.prototype.forEach.call(grid.children, function (c) { c.classList.remove('on'); });
+        if (buttons[e]) buttons[e].classList.add('on');
+      }
+    };
   }
 
   function parseNumberList(text) {
@@ -778,15 +800,21 @@
 
     // Stitches
     els.stitchNumber.textContent = String(prt.stitch);
-    var g = p.groupSize > 0 ? p.groupSize : 10;
+    var g = p.groupSize > 0 ? p.groupSize : 0;
     // `line` is the row the counter is on, so reuse it instead of a second lookup.
     var target = Store.currentTarget(prt);
     var approx = target && Store.isComputed(line) ? '≈ ' : '';
-    var groupNo = prt.stitch === 0 ? 1 : Math.ceil(prt.stitch / g);
-    var within = prt.stitch === 0 ? 0 : ((prt.stitch - 1) % g) + 1;
-    var readout = 'Group ' + groupNo;
-    if (target) readout += ' of ' + approx + Math.ceil(target / g);
-    readout += ' · stitch ' + within + ' of ' + g;
+    var readout;
+    if (g > 0) {
+      var groupNo = prt.stitch === 0 ? 1 : Math.ceil(prt.stitch / g);
+      var within = prt.stitch === 0 ? 0 : ((prt.stitch - 1) % g) + 1;
+      readout = 'Group ' + groupNo;
+      if (target) readout += ' of ' + approx + Math.ceil(target / g);
+      readout += ' · stitch ' + within + ' of ' + g;
+    } else {
+      // Grouping off: just the plain stitch number.
+      readout = 'stitch ' + prt.stitch;
+    }
     els.stitchReadout.textContent = readout;
 
     if (target) {
@@ -1024,22 +1052,47 @@
 
         if (!editing) {
           var grid = el('div', 'tpl-grid');
-          Store.templates.forEach(function (tpl) {
-            var card = button('tpl-card' + (tpl.id === chosenTemplate ? ' on' : ''));
-            card.appendChild(el('span', 'tpl-emoji', tpl.emoji));
-            var main = el('div', 'tpl-main');
-            main.appendChild(el('div', 'tpl-name', tpl.name));
-            main.appendChild(el('div', 'tpl-parts', templatePreview(tpl)));
-            card.appendChild(main);
-            on(card, 'click', function () {
-              chosenTemplate = tpl.id;
-              Array.prototype.forEach.call(grid.children, function (c) { c.classList.remove('on'); });
-              card.classList.add('on');
-              if (!nameInput.value.trim()) nameInput.placeholder = tpl.name;
+
+          function renderTemplatePicker() {
+            clear(grid);
+            var list = Store.templates();
+            if (!list.length) {
+              grid.appendChild(el('p', 'muted', 'No templates yet.'));
+              return;
+            }
+            // The chosen template may have just been deleted in the editor.
+            if (!Store.template(chosenTemplate)) chosenTemplate = list[0].id;
+            list.forEach(function (tpl) {
+              var card = button('tpl-card' + (tpl.id === chosenTemplate ? ' on' : ''));
+              card.appendChild(el('span', 'tpl-emoji', tpl.emoji));
+              var main = el('div', 'tpl-main');
+              main.appendChild(el('div', 'tpl-name', tpl.name));
+              main.appendChild(el('div', 'tpl-parts', templatePreview(tpl)));
+              card.appendChild(main);
+              on(card, 'click', function () {
+                chosenTemplate = tpl.id;
+                Array.prototype.forEach.call(grid.children, function (c) { c.classList.remove('on'); });
+                card.classList.add('on');
+                if (!nameInput.value.trim()) nameInput.placeholder = tpl.name;
+                // The template carries an emoji, a count mode and a group size.
+                if (emoji) emoji.set(tpl.emoji);
+                if (modeSeg) modeSeg.set(tpl.countMode);
+                if (groupStep) groupStep.set(tpl.groupSize);
+              });
+              grid.appendChild(card);
             });
-            grid.appendChild(card);
-          });
+          }
+
+          renderTemplatePicker();
           body.appendChild(field('Template', grid));
+
+          var editRow = el('div', 'tpl-edit-link');
+          var editLink = button('linkish', 'Edit templates');
+          on(editLink, 'click', function () {
+            openTemplatesSheet(renderTemplatePicker);
+          });
+          editRow.appendChild(editLink);
+          body.appendChild(editRow);
         }
 
         modeSeg = segmented(
@@ -1048,8 +1101,10 @@
         );
         body.appendChild(field('Count', modeSeg.node));
 
-        groupStep = stepper(p ? p.groupSize : 10, 1, 50, 'group size');
-        body.appendChild(field('Stitch group size', groupStep.node, 'A buzz every N stitches while you count.'));
+        groupStep = stepper(p ? p.groupSize : 10, 0, 50, 'group size');
+        body.appendChild(
+          field('Stitch group size', groupStep.node, 'A buzz every N stitches while you count. 0 = no grouping.')
+        );
 
         notesArea = textArea(p ? p.notes : '', '', 'Hook 4mm · Paintbox DK · pattern link…');
         body.appendChild(field('Notes', notesArea));
@@ -1442,6 +1497,311 @@
   }
 
   /* ================================================================== *
+   * 16c. Templates (list + editor)
+   * ================================================================== */
+
+  function templateSub(tpl) {
+    var bits = [tpl.parts.length + ' part' + (tpl.parts.length === 1 ? '' : 's')];
+    if (tpl.checklist.length) {
+      bits.push(tpl.checklist.length + ' checklist item' + (tpl.checklist.length === 1 ? '' : 's'));
+    }
+    return bits.join(' · ');
+  }
+
+  /** Renders the tap-to-edit template list into `container`. */
+  function renderTemplateList(container, onChanged) {
+    clear(container);
+    var list = Store.templates();
+    var userCount = 0;
+
+    list.forEach(function (tpl) {
+      if (!tpl.builtIn) userCount++;
+      var item = button('menu-item tpl-item');
+      item.setAttribute('aria-label', 'Edit template ' + tpl.name);
+      item.appendChild(el('span', 'menu-icon', tpl.emoji));
+      var main = el('span', 'tpl-item-main');
+      main.appendChild(el('span', 'tpl-item-name', tpl.name));
+      main.appendChild(el('span', 'tpl-item-sub', templateSub(tpl)));
+      item.appendChild(main);
+      if (tpl.builtIn) item.appendChild(el('span', 'tpl-tag', 'Built-in'));
+      on(item, 'click', function () {
+        openTemplateEditor({
+          id: tpl.id,
+          onSaved: function () {
+            renderTemplateList(container, onChanged);
+            if (onChanged) onChanged();
+          }
+        });
+      });
+      container.appendChild(item);
+    });
+
+    if (!userCount) {
+      container.appendChild(el('p', 'muted', 'Your saved templates will show up here.'));
+    }
+  }
+
+  /** The Templates sheet: list + "＋ New template". */
+  function openTemplatesSheet(onChanged) {
+    openSheet({
+      title: 'Templates',
+      build: function (body) {
+        var list = el('div', 'list');
+        renderTemplateList(list, onChanged);
+        body.appendChild(list);
+
+        var add = button('btn primary block', '＋ New template');
+        on(add, 'click', function () {
+          openTemplateEditor({
+            onSaved: function () {
+              renderTemplateList(list, onChanged);
+              if (onChanged) onChanged();
+            }
+          });
+        });
+        body.appendChild(add);
+        body.appendChild(
+          el('div', 'field-hint', 'Built-in templates can be edited and reset. Your own ones can be deleted.')
+        );
+      }
+    });
+  }
+
+  /**
+   * Template editor.
+   * @param {{ id?:string, draft?:Object, onSaved?:Function }} opts
+   */
+  function openTemplateEditor(opts) {
+    opts = opts || {};
+    var source = opts.draft || (opts.id ? Store.template(opts.id) : null);
+    if (!source) {
+      source = {
+        id: '',
+        name: '',
+        emoji: '🧶',
+        countMode: 'rows',
+        groupSize: 10,
+        parts: [{ name: 'Main', makeCount: 1 }],
+        checklist: [],
+        builtIn: false
+      };
+    }
+
+    var editingId = source.id || '';
+    var isBuiltIn = !!source.builtIn;
+    var model = {
+      parts: (source.parts || []).map(function (p) {
+        return { name: p.name, makeCount: p.makeCount };
+      }),
+      checklist: (source.checklist || []).slice()
+    };
+    if (!model.parts.length) model.parts.push({ name: '', makeCount: 1 });
+
+    var nameInput, emoji, modeSeg, groupStep, partsWrap, checkWrap;
+    var partRefs = [];
+    var checkRefs = [];
+
+    /** Pull the live input values back into the model before a re-render. */
+    function syncModel() {
+      partRefs.forEach(function (ref, i) {
+        if (!model.parts[i]) return;
+        model.parts[i].name = ref.name.value;
+        model.parts[i].makeCount = ref.step.get();
+      });
+      checkRefs.forEach(function (inp, i) {
+        if (i < model.checklist.length) model.checklist[i] = inp.value;
+      });
+    }
+
+    function renderParts() {
+      clear(partsWrap);
+      partRefs = [];
+      model.parts.forEach(function (p, i) {
+        var row = el('div', 'tpl-part-row');
+
+        var top = el('div', 'tpl-part-top');
+        var nameIn = textInput(p.name, 'Body');
+        nameIn.className = 'tpl-part-name';
+        nameIn.setAttribute('aria-label', 'Part ' + (i + 1) + ' name');
+        var del = button('tpl-mini', '✕', 'Remove part ' + (p.name || i + 1));
+        on(del, 'click', function () {
+          syncModel();
+          model.parts.splice(i, 1);
+          if (!model.parts.length) model.parts.push({ name: '', makeCount: 1 });
+          renderParts();
+        });
+        top.appendChild(nameIn);
+        top.appendChild(del);
+
+        var bot = el('div', 'tpl-part-bot');
+        bot.appendChild(el('span', 'tpl-mini-label', 'Make'));
+        var step = stepper(p.makeCount, 1, 99, 'make count');
+        step.input.setAttribute('aria-label', 'How many of part ' + (i + 1));
+        bot.appendChild(step.node);
+        var up = button('tpl-mini', '▲', 'Move part ' + (i + 1) + ' up');
+        var down = button('tpl-mini', '▼', 'Move part ' + (i + 1) + ' down');
+        up.disabled = i === 0;
+        down.disabled = i === model.parts.length - 1;
+        on(up, 'click', function () {
+          syncModel();
+          model.parts.splice(i - 1, 0, model.parts.splice(i, 1)[0]);
+          renderParts();
+        });
+        on(down, 'click', function () {
+          syncModel();
+          model.parts.splice(i + 1, 0, model.parts.splice(i, 1)[0]);
+          renderParts();
+        });
+        bot.appendChild(up);
+        bot.appendChild(down);
+
+        row.appendChild(top);
+        row.appendChild(bot);
+        partsWrap.appendChild(row);
+        partRefs.push({ name: nameIn, step: step });
+      });
+
+      var add = button('btn block', '＋ Add part');
+      on(add, 'click', function () {
+        syncModel();
+        model.parts.push({ name: '', makeCount: 1 });
+        renderParts();
+        var last = partRefs[partRefs.length - 1];
+        if (last) last.name.focus();
+      });
+      partsWrap.appendChild(add);
+    }
+
+    function renderChecklist() {
+      clear(checkWrap);
+      checkRefs = [];
+      model.checklist.forEach(function (text, i) {
+        var row = el('div', 'tpl-check-row');
+        var inp = textInput(text, 'Sew the tail on');
+        inp.setAttribute('aria-label', 'Checklist item ' + (i + 1));
+        var del = button('tpl-mini', '✕', 'Remove checklist item ' + (i + 1));
+        on(del, 'click', function () {
+          syncModel();
+          model.checklist.splice(i, 1);
+          renderChecklist();
+        });
+        row.appendChild(inp);
+        row.appendChild(del);
+        checkWrap.appendChild(row);
+        checkRefs.push(inp);
+      });
+      if (!model.checklist.length) {
+        checkWrap.appendChild(el('p', 'muted', 'No assembly steps yet.'));
+      }
+      var add = button('btn block', '＋ Add item');
+      on(add, 'click', function () {
+        syncModel();
+        model.checklist.push('');
+        renderChecklist();
+        var last = checkRefs[checkRefs.length - 1];
+        if (last) last.focus();
+      });
+      checkWrap.appendChild(add);
+    }
+
+    openSheet({
+      title: editingId ? 'Edit template' : 'New template',
+      build: function (body, api) {
+        nameInput = textInput(source.name || '', 'Sheep');
+        body.appendChild(field('Name', nameInput));
+
+        emoji = emojiGrid(source.emoji || '🧶');
+        body.appendChild(field('Emoji', emoji.node));
+
+        modeSeg = segmented(
+          [{ id: 'rows', label: 'Rows' }, { id: 'rounds', label: 'Rounds' }],
+          source.countMode === 'rounds' ? 'rounds' : 'rows'
+        );
+        body.appendChild(field('Count', modeSeg.node));
+
+        groupStep = stepper(typeof source.groupSize === 'number' ? source.groupSize : 10, 0, 50, 'group size');
+        body.appendChild(
+          field('Stitch group size', groupStep.node, 'New projects start with this group size. 0 = no grouping.')
+        );
+
+        partsWrap = el('div', 'tpl-parts-edit');
+        body.appendChild(field('Parts', partsWrap, 'Wings ×2, legs ×4 — each piece is counted separately.'));
+        renderParts();
+
+        checkWrap = el('div', 'tpl-check-edit');
+        body.appendChild(field('Assembly checklist', checkWrap));
+        renderChecklist();
+
+        var zone = el('div', 'danger-zone');
+        if (isBuiltIn && editingId) {
+          var reset = button('btn block', 'Reset to default');
+          on(reset, 'click', function () {
+            confirmSheet({
+              title: 'Reset ' + (source.name || 'this template') + '?',
+              message: 'It goes back to the parts and checklist it shipped with. Projects already made from it are untouched.',
+              confirmText: 'Reset'
+            }).then(function (ok) {
+              if (!ok) return;
+              Store.resetTemplate(editingId);
+              api.close();
+              toast('Template reset to default');
+              if (opts.onSaved) opts.onSaved(null);
+            });
+          });
+          zone.appendChild(reset);
+        }
+        if (!isBuiltIn && editingId) {
+          var del = button('btn danger block', 'Delete template');
+          on(del, 'click', function () {
+            confirmSheet({
+              title: 'Delete ' + (source.name || 'this template') + '?',
+              message: 'Projects already made from it are untouched.',
+              confirmText: 'Delete',
+              danger: true
+            }).then(function (ok) {
+              if (!ok) return;
+              Store.deleteTemplate(editingId);
+              api.close();
+              toast('Template deleted');
+              if (opts.onSaved) opts.onSaved(null);
+            });
+          });
+          zone.appendChild(del);
+        }
+        if (zone.firstChild) body.appendChild(zone);
+      },
+      footer: [
+        { text: 'Cancel', cls: 'btn ghost', onClick: function (api) { api.close(); } },
+        {
+          text: 'Save',
+          cls: 'btn primary',
+          onClick: function (api) {
+            syncModel();
+            var saved;
+            try {
+              saved = Store.saveTemplate({
+                id: editingId,
+                name: nameInput.value,
+                emoji: emoji.get(),
+                countMode: modeSeg.get(),
+                groupSize: groupStep.get(),
+                parts: model.parts,
+                checklist: model.checklist
+              });
+            } catch (e) {
+              toast(e && e.message ? e.message : 'That template is not valid');
+              return;
+            }
+            api.close();
+            toast('Saved “' + saved.name + '”');
+            if (opts.onSaved) opts.onSaved(saved);
+          }
+        }
+      ]
+    });
+  }
+
+  /* ================================================================== *
    * 16b. Import pattern sheet
    * ================================================================== */
 
@@ -1731,6 +2091,157 @@
         var input = textInput('', 'Sew the tail on');
         var addBtn = button('btn primary', 'Add');
         addBtn.style.flex = '0 0 auto';
+        var actions = el('div', 'danger-zone');
+        var editingId = null;
+
+        /** The template this project came from, when it still exists. */
+        function sourceTemplate() {
+          if (!p.templateId) return null;
+          return Store.template(p.templateId) || null;
+        }
+
+        function renderItem(item, idx) {
+          var row = el('div', 'list-item' + (item.done ? ' done' : ''));
+
+          var chk = button('check', '✓', item.text);
+          chk.setAttribute('role', 'checkbox');
+          chk.setAttribute('aria-checked', item.done ? 'true' : 'false');
+          on(chk, 'click', function () {
+            Store.toggleChecklistItem(p.id, item.id);
+            fb('tap');
+            refresh();
+          });
+          row.appendChild(chk);
+
+          if (editingId === item.id) {
+            var inp = textInput(item.text, 'Sew the tail on');
+            inp.className = 'item-edit';
+            inp.setAttribute('aria-label', 'Rename ' + item.text);
+            var settled = false;
+            function commit() {
+              if (settled) return;
+              settled = true;
+              editingId = null;
+              var v = inp.value.trim();
+              if (v && v !== item.text) Store.renameChecklistItem(p.id, item.id, v);
+              refresh();
+            }
+            function cancelEdit() {
+              if (settled) return;
+              settled = true;
+              editingId = null;
+              refresh();
+            }
+            on(inp, 'keydown', function (e) {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commit();
+              } else if (e.key === 'Escape' || e.key === 'Esc') {
+                // Don't let Escape reach the <dialog> and close the sheet.
+                e.preventDefault();
+                e.stopPropagation();
+                cancelEdit();
+              }
+            });
+            on(inp, 'blur', commit);
+            row.appendChild(inp);
+            window.setTimeout(function () {
+              inp.focus();
+              inp.select();
+            }, 0);
+          } else {
+            var text = button('item-text item-text-btn', item.text, 'Rename ' + item.text);
+            on(text, 'click', function () {
+              editingId = item.id;
+              refresh();
+            });
+            row.appendChild(text);
+          }
+
+          var up = button('item-move', '▲', 'Move ' + item.text + ' up');
+          up.disabled = idx === 0;
+          on(up, 'click', function () {
+            Store.moveChecklistItem(p.id, item.id, -1);
+            refresh();
+          });
+          var down = button('item-move', '▼', 'Move ' + item.text + ' down');
+          down.disabled = idx === p.checklist.length - 1;
+          on(down, 'click', function () {
+            Store.moveChecklistItem(p.id, item.id, 1);
+            refresh();
+          });
+          var del = button('item-del', '✕', 'Delete ' + item.text);
+          on(del, 'click', function () {
+            Store.deleteChecklistItem(p.id, item.id);
+            refresh();
+          });
+          row.appendChild(up);
+          row.appendChild(down);
+          row.appendChild(del);
+          return row;
+        }
+
+        function renderActions() {
+          clear(actions);
+          var doneCount = 0;
+          p.checklist.forEach(function (i) { if (i.done) doneCount++; });
+
+          var tpl = sourceTemplate();
+          if (tpl) {
+            var reload = button('btn block', '↻ Reload from “' + tpl.name + '”');
+            on(reload, 'click', function () {
+              confirmSheet({
+                title: 'Reload the checklist?',
+                message: 'The list is replaced by the ' + tpl.checklist.length + ' step' +
+                  (tpl.checklist.length === 1 ? '' : 's') + ' from “' + tpl.name +
+                  '”. Anything you added or ticked here is lost.',
+                confirmText: 'Reload'
+              }).then(function (ok) {
+                if (!ok) return;
+                var n = Store.reloadChecklistFromTemplate(p.id);
+                refresh();
+                toast(n === null ? 'That template is gone' : 'Loaded ' + n + ' step' + (n === 1 ? '' : 's'));
+              });
+            });
+            actions.appendChild(reload);
+          }
+
+          if (doneCount) {
+            var clearDone = button('btn block', 'Clear completed (' + doneCount + ')');
+            on(clearDone, 'click', function () {
+              confirmSheet({
+                title: 'Clear completed?',
+                message: doneCount + ' ticked item' + (doneCount === 1 ? '' : 's') + ' will be removed.',
+                confirmText: 'Clear'
+              }).then(function (ok) {
+                if (!ok) return;
+                var n = Store.clearChecklist(p.id, { completedOnly: true });
+                refresh();
+                toast('Cleared ' + n + ' item' + (n === 1 ? '' : 's'));
+              });
+            });
+            actions.appendChild(clearDone);
+          }
+
+          if (p.checklist.length) {
+            var clearAll = button('btn danger block', 'Clear all');
+            on(clearAll, 'click', function () {
+              confirmSheet({
+                title: 'Clear the whole checklist?',
+                message: 'All ' + p.checklist.length + ' item' + (p.checklist.length === 1 ? '' : 's') +
+                  ' will be removed.',
+                confirmText: 'Clear all',
+                danger: true
+              }).then(function (ok) {
+                if (!ok) return;
+                Store.clearChecklist(p.id, { completedOnly: false });
+                refresh();
+                toast('Checklist cleared');
+              });
+            });
+            actions.appendChild(clearAll);
+          }
+        }
 
         function refresh() {
           var done = 0;
@@ -1739,28 +2250,12 @@
           clear(list);
           if (!p.checklist.length) {
             list.appendChild(el('p', 'muted', 'Nothing on the list yet.'));
-            return;
+          } else {
+            p.checklist.forEach(function (item, idx) {
+              list.appendChild(renderItem(item, idx));
+            });
           }
-          p.checklist.forEach(function (item) {
-            var row = el('div', 'list-item' + (item.done ? ' done' : ''));
-            var chk = button('check', '✓', item.text);
-            chk.setAttribute('role', 'checkbox');
-            chk.setAttribute('aria-checked', item.done ? 'true' : 'false');
-            on(chk, 'click', function () {
-              Store.toggleChecklistItem(p.id, item.id);
-              fb('tap');
-              refresh();
-            });
-            var del = button('item-del', '✕', 'Delete ' + item.text);
-            on(del, 'click', function () {
-              Store.deleteChecklistItem(p.id, item.id);
-              refresh();
-            });
-            row.appendChild(chk);
-            row.appendChild(el('span', 'item-text', item.text));
-            row.appendChild(del);
-            list.appendChild(row);
-          });
+          renderActions();
         }
 
         function add() {
@@ -1784,7 +2279,12 @@
         body.appendChild(count);
         body.appendChild(list);
         body.appendChild(addRow);
+        body.appendChild(el('div', 'field-hint', 'Tap an item’s text to rename it.'));
+        body.appendChild(actions);
         refresh();
+      },
+      onClose: function () {
+        render();
       }
     });
   }
@@ -1932,6 +2432,15 @@
       { icon: '📝', label: 'Notes', run: function () { openNotesSheet(p.id); } },
       { icon: '🕘', label: 'History', run: function () { openHistorySheet(p.id); } },
       { icon: '🏷️', label: 'Status', run: function () { openStatusSheet(p.id); } },
+      {
+        icon: '🧵',
+        label: 'Save as template',
+        run: function () {
+          var draft = Store.templateFromProject(p.id);
+          if (!draft) return;
+          openTemplateEditor({ draft: draft });
+        }
+      },
       { icon: '📤', label: 'Export backup', run: function () { exportBackup(); } }
     ];
     openSheet({
@@ -2143,6 +2652,24 @@
           );
         }
         body.appendChild(toggles);
+
+        /* ---- Templates ---- */
+        var tplField = el('div', 'field');
+        tplField.appendChild(el('div', 'field-label', 'Templates'));
+        var tplList = el('div', 'list');
+        renderTemplateList(tplList);
+        tplField.appendChild(tplList);
+        var newTpl = button('btn block', '＋ New template');
+        on(newTpl, 'click', function () {
+          openTemplateEditor({
+            onSaved: function () {
+              renderTemplateList(tplList);
+            }
+          });
+        });
+        tplField.appendChild(newTpl);
+        tplField.appendChild(el('div', 'field-hint', 'Templates set up the parts and checklist of a new project.'));
+        body.appendChild(tplField);
 
         /* ---- Backup ---- */
         var backup = el('div', 'field');

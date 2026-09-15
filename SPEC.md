@@ -48,7 +48,8 @@ Project = {
   status: 'active'|'paused'|'finished'|'frogged',
   createdAt: number, updatedAt: number, finishedAt: number|null,
   countMode: 'rows'|'rounds',       // label only; both count identically
-  groupSize: number,                // stitch group size, default 10, min 1
+  groupSize: number,                // stitch group size, default 10, 0–50 (0 = grouping off)
+  templateId: string|null,          // template the project was created from (null on old saves / unknown)
   notes: string,                    // project-wide notes (hook, yarn, pattern link)
   timer: { totalMs: number, runningSince: number|null },
   parts: Part[],                    // always >= 1 part. Single-piece projects have one part named 'Main'
@@ -74,7 +75,7 @@ Part = {
 
 ### Counting semantics (Store implements these; App only calls them)
 
-- `Store.tapStitch(projectId, partId)` → `stitch += 1`. If the current row (`row + 1`) has a stitch target from the pattern (`Patterns.targetFor`) and `stitch >= target` and `settings.autoAdvance` → completes the row (same as tapRow) and returns `{ event: 'rowAuto' }`. If stitch lands on a multiple of `groupSize` → returns `{ event: 'group' }`. If stitch is in `alerts` → returns `{ event: 'alert', stitch }`. Else `{ event: 'stitch' }`.
+- `Store.tapStitch(projectId, partId)` → `stitch += 1`. If the current row (`row + 1`) has a stitch target from the pattern (`Patterns.targetFor`) and `stitch >= target` and `settings.autoAdvance` → completes the row (same as tapRow) and returns `{ event: 'rowAuto' }`. If `groupSize > 0` and stitch lands on a multiple of `groupSize` → returns `{ event: 'group' }` (`groupSize` 0 turns grouping off entirely). If stitch is in `alerts` → returns `{ event: 'alert', stitch }`. Else `{ event: 'stitch' }`.
 - `Store.untapStitch` → `stitch = max(0, stitch - 1)`.
 - `Store.tapRow` → `row += 1`, `stitch = 0`, push history entry. If `targetRows` and `row >= targetRows`: if `piecesDone + 1 < makeCount` → `piecesDone += 1`, `row = 0` and return `{ event: 'pieceDone', piecesDone, makeCount }`; else `piecesDone = makeCount` and return `{ event: 'partDone' }`. If ALL parts are done (every part with a targetRows has piecesDone >= makeCount; parts without targetRows are ignored, and at least one part has a target) → return `{ event: 'projectDone' }` (App then sets status finished + Celebrate.play). Else `{ event: 'row' }`.
 - `Store.untapRow` → `row = max(0, row - 1)`, `stitch = 0`, pop last history entry for that part if it matches.
@@ -177,6 +178,28 @@ Row → section assignment uses **expected-next-row matching**: each section rem
 - Counter screen: the pattern line shows `notes` beneath it in a smaller muted line (joined with ' · '). A computed target renders as `≈ 24` (tilde-approx) in the stitch readout; explicit as `24`. When the working row is 1 and a setup line (row 0) exists, show it above the pattern line labelled "Setup".
 - Pattern sheet: render section headers as headers, setup lines labelled, `notes` inline under their row, computed counts as `≈N` at the end of the line.
 
+## Templates v2 (user-editable)
+
+Templates are DATA in state, not a constant. `State.templates: Template[]`.
+```js
+Template = { id, name, emoji, countMode: 'rows'|'rounds', groupSize: number (default 10, 0 = grouping off),
+             parts: [{ name, makeCount }], checklist: string[], builtIn: boolean, updatedAt }
+```
+Shipped defaults (seeded into `state.templates` on first load, and any missing built-in id is re-seeded on load so old saves get them):
+- `blank` "Single piece" 🧶 rows, group 10, parts [Main], checklist []
+- `sheep` "Sheep" 🐑 rounds, group 10, parts [Body, Head, Ears x2, Legs x4, Tail], checklist [Stuff body, Stuff head, Sew head to body, Attach safety eyes, Sew ears, Sew legs, Sew tail, Embroider face]
+- `dragon` "Dragon" 🐉 rounds, group 10, parts [Body, Head, Wings x2, Legs x4, Tail, Horns x2, Spikes], checklist [Stuff body, Stuff head, Sew head to body, Attach safety eyes, Sew wings, Sew legs, Sew tail, Sew horns, Sew spikes down back, Embroider nostrils]
+(`garment` and `blanket` are removed; `blob` is renamed to `sheep` — migrate: if a saved state has a template with id `blob`, keep it under id `sheep`.)
+
+Store API: `Store.templates()` → array (built-ins first, then user templates by name); `Store.template(id)`; `Store.saveTemplate(tpl)` (create when no id / unknown id, else update; validates: name required, ≥ 1 part, part names non-empty, makeCount 1–99); `Store.deleteTemplate(id)` (user templates only; built-ins cannot be deleted, only reset); `Store.resetTemplate(id)` (built-in → restore shipped values); `Store.templateFromProject(projectId)` → an unsaved Template drafted from the project's parts (name + makeCount), checklist texts, countMode, groupSize, emoji, name "<project name> template". `Store.createProject` reads the template from state. Export/import JSON includes templates (import merges by id, imported wins). Undo not required for template edits.
+
+UI:
+- New-project sheet: template picker reads `Store.templates()`; each card shows emoji, name, and the part list preview; a small "Edit templates" link under the picker opens the Templates sheet.
+- Settings sheet: new section **Templates** with a list (emoji, name, "N parts", "Built-in" tag) — tap to edit; "＋ New template" button.
+- **Template editor sheet**: name, emoji grid (same as project), Rows/Rounds toggle, group size stepper, **Parts** list (each row: name input, make-count stepper 1–99, ✕ remove; "＋ Add part" button; drag not required but ▲▼ move buttons are), **Checklist** list (text inputs, ✕, "＋ Add item"), Save / Cancel, and for built-ins a "Reset to default" button (confirm), for user templates a "Delete template" button (confirm). Validation errors shown inline (toast is fine).
+- Project overflow menu: **Save as template** → opens the Template editor pre-filled from `Store.templateFromProject`, so the user can tweak and save.
+- Empty state text for user templates section when none: "Your saved templates will show up here."
+
 ## Themes contract
 
 `css/themes.css` defines, for each `html[data-theme="<id>"]`, ALL of these variables. `css/app.css` uses only these (plus its own layout numbers). Defaults for `:root` (no attribute) must equal `stardew-spring`.
@@ -264,7 +287,7 @@ Uses `navigator.vibrate` when present (Android), WebAudio oscillator sounds synt
    - Piece/part completed toasts: "Wing 1 of 2 done! Starting wing 2." Part done: "Body complete ✓". Project done → status finished + `Celebrate.play(theme,{kind:'project'})` + sheet "All parts done! 🎉 Assembly checklist →".
 4. **Part editor sheet**: name, make count stepper, target rows, repeat (enable, start, end, times), stitch alerts (comma list), placement notes, pattern text (textarea, monospace-ish, shows "Parsed: 24 rows, targets found" using `Patterns.summary`), Reset counts, Delete part (not if only one).
 5. **Pattern sheet**: full pattern with lines; current line highlighted; tapping a line with a row number jumps the counter to that row (confirm).
-6. **Checklist sheet**: checkable items, add item, delete via swipe or ✕, "3 of 8 done".
+6. **Checklist sheet**: checkable items, "3 of 8 done", add item, ✕ delete, ▲▼ reorder, tap an item's text to rename it inline (Enter/blur saves, Escape cancels), "Clear completed" and "Clear all" (both confirm), and "Reload from <template>" (replaces the list with `Project.templateId`'s checklist; hidden when the project has no template or it no longer exists). Store: `renameChecklistItem`, `moveChecklistItem(projectId, itemId, delta)`, `clearChecklist(projectId, { completedOnly })`, `reloadChecklistFromTemplate(projectId)`.
 7. **Notes sheet**: project notes textarea (autosaves).
 8. **History sheet**: list of completed rows with time (newest first), "Clear".
 9. **Settings sheet**: theme grid (6 cards with swatches, grouped Stardew / Dragon, current one highlighted; tap applies instantly), haptics toggle, sounds toggle, auto-advance toggle, Export (downloads `stitchkeeper-backup-YYYY-MM-DD.json` via Blob + `<a download>`; also uses `navigator.share` with a File when available on mobile), Import (file input), About/version.
