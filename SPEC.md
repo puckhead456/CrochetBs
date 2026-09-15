@@ -220,6 +220,31 @@ Tours (write the copy warmly, short sentences, second person; every step teaches
 
 Entry points (App): a **Help** item in the Settings sheet ("Help & tours" section: list from `Tour.list()` with ✓ for seen and a Replay/Start button each, plus 6 short FAQ answers: importing a pattern, what ≈ means, repeats, stitch alerts, group size 0, backups) and a **?** item in the project overflow menu that starts `counter`. First run: when the home screen is empty on first ever load (settings flag `welcomed` false), show a small welcome card in the empty state: "New here? Take the 2-minute tour" → starts `home` then chains into `counter` (sample project) then offers `import`. Set `welcomed` true regardless of choice. `Store.settings()` gains `toursSeen: string[]` and `welcomed: boolean` (migrate on load).
 
+## PDF import (in-app)
+
+New file `js/pdftext.js` → `window.PdfText`. Uses the vendored pdf.js 3.11.174 UMD build at `./js/vendor/pdf.min.js` (worker `./js/vendor/pdf.worker.min.js`), loaded lazily on first use via a dynamically inserted `<script>`; both files are precached by the service worker so it works offline. Everything runs on-device; no network besides loading the library.
+
+```js
+PdfText.extract(file, { onProgress(page, total) }) → Promise<{ text, pages, chars, columnsDetected: number }>
+PdfText.isAvailable() → boolean   // false when the library cannot load (offline first run without cache)
+```
+Extraction rules (this is what makes the parser's life easy):
+- Per page, group text items into lines by Y (tolerance 2.5 units), sort lines top→bottom, items left→right, join items with a space, collapse whitespace.
+- **Column detection:** for pages with ≥ 12 lines, build the set of x-spans (start..end) of every item; if there is a vertical gap band ≥ 14 units wide located between 30% and 70% of the page width that no item spans, for ≥ 70% of lines, treat the page as two columns: emit all left-column lines (top→bottom) first, then all right-column lines. Same rule applied recursively at most once (3 columns max). Else emit single-column. Report how many pages were split in `columnsDetected`.
+- Join fragments like `fi nished` / `stuf fi ng` (pdf ligature splits: a lone `fi`/`fl` token with spaces around it) back into the word.
+- Insert `=== PAGE n ===` markers between pages (the parser treats them as notes).
+- Drop lines that are only page furniture: pure page numbers (`3 of 6`, `Page 3`), `©`/`@ 20xx ... All Rights Reserved` lines, lines that are only single capital letters (photo labels).
+
+Store: `Store.suggestChecklist(text) → string[]` — from the pasted/extracted text, collect imperative assembly steps: lines (or note paragraphs) in sections whose header is Assembly / Finishing / Construction / Sewing, plus any line anywhere that starts with `Sew`, `Attach`, `Stuff`, `Embroider`, `Weave in`, `Block`, `Insert (safety) eyes`, `Glue`, `Fasten off and sew`, `Join`, trimmed to ≤ 90 chars, de-duplicated, max 20. Uses `Patterns.parse` kinds/notes where helpful.
+
+App (Import pattern sheet):
+- A **drop zone** above the textarea: dashed border, icon, "Drop a pattern PDF here, or **choose a file**" (the whole zone is a button; `<input type="file" accept="application/pdf,.pdf">` hidden; on phones the button opens the file picker). Drag-over state highlights it. Accepts one PDF; non-PDF → toast "That isn't a PDF".
+- While extracting: zone shows "Reading page 3 of 21…" with a slim progress bar; the sheet stays usable. On success: textarea is filled (replacing content, after a confirm if the textarea already had text), a line under the zone says "Read 9 pages · 2 columns untangled · 4,120 characters", and the sections list refreshes as usual. On failure: toast with the reason ("Couldn't read that PDF (it may be scanned images)").
+- New **Checklist items found** block under the sections list: checkboxes (default on) for `Store.suggestChecklist(text)` results; "Create parts" and "Put it all in…" both also append the checked items to the project checklist (skipping duplicates by text, case-insensitive), and the toast mentions "+ 6 checklist items".
+- Home empty state and the New project sheet get a short line: "Have a pattern PDF? Create the project, then use menu → Import pattern to drop it in."
+- The import tour gets a first step on the drop zone ("Drop the PDF from your pattern shop right here, or paste text below").
+- The `sw.js` PRECACHE list gains `./js/pdftext.js`, `./js/vendor/pdf.min.js`, `./js/vendor/pdf.worker.min.js`.
+
 ## Themes contract
 
 `css/themes.css` defines, for each `html[data-theme="<id>"]`, ALL of these variables. `css/app.css` uses only these (plus its own layout numbers). Defaults for `:root` (no attribute) must equal `stardew-spring`.

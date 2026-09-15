@@ -1128,6 +1128,8 @@
         notesArea = textArea(p ? p.notes : '', '', 'Hook 4mm · Paintbox DK · pattern link…');
         body.appendChild(field('Notes', notesArea));
 
+        if (!editing) body.appendChild(el('p', 'pdf-hint', PDF_HINT));
+
         if (editing) {
           var zone = el('div', 'danger-zone');
           var del = button('btn danger block', 'Delete project');
@@ -1828,9 +1830,30 @@
     'No rows found yet. Paste the instruction part of your pattern ' +
     '(e.g. “Rnd 1: 6 sc in MR (6)”).';
 
+  var PDF_HINT = 'Have a pattern PDF? Create the project, then use menu → Import pattern to drop it in.';
+
   function sectionRowInfo(text, seq) {
     var s = Store.patternSummary({ id: 'import:' + seq, patternText: text, sizeIndex: 0 });
     return { rows: s.rows, computedOnly: s.computedOnly, hasTargets: s.hasTargets };
+  }
+
+  function plural(n, word) {
+    return n + ' ' + word + (n === 1 ? '' : 's');
+  }
+
+  function isPdfFile(file) {
+    if (!file) return false;
+    if (file.type === 'application/pdf') return true;
+    return /\.pdf$/i.test(file.name || '');
+  }
+
+  /** The first PDF out of a drop / file input, or the first file at all. */
+  function firstFile(fileList) {
+    if (!fileList || !fileList.length) return null;
+    for (var i = 0; i < fileList.length; i++) {
+      if (isPdfFile(fileList[i])) return fileList[i];
+    }
+    return fileList[0];
   }
 
   /**
@@ -1842,6 +1865,10 @@
     if (!p) return;
     var activeName = (Store.activePart(p) || {}).name || 'this part';
     var area, list, rows = [];
+    var zone, zoneLabel, fileInput, progress, progressFill, resultLine;
+    var checkField, checkList, checkItems = [];
+    var reading = false;
+    var docGuard = null;
 
     function buildRows() {
       var secs = Store.splitSections(area.value);
@@ -1902,9 +1929,66 @@
       });
     }
 
+    /* ---------------- checklist suggestions ---------------- */
+
+    function buildChecks() {
+      var found = [];
+      try {
+        found = Store.suggestChecklist(area.value) || [];
+      } catch (e) {
+        found = [];
+      }
+      var was = {};
+      checkItems.forEach(function (c) { was[c.text.toLowerCase()] = c.checked; });
+      checkItems = found.map(function (t) {
+        var key = t.toLowerCase();
+        return { text: t, checked: was[key] === undefined ? true : was[key] };
+      });
+    }
+
+    function renderChecks() {
+      if (!checkField) return;
+      checkField.hidden = checkItems.length === 0;
+      clear(checkList);
+      checkItems.forEach(function (c) {
+        var item = el('div', 'imp-item');
+        var chk = button('check', '✓', 'Add “' + c.text + '” to the checklist');
+        chk.setAttribute('role', 'checkbox');
+        chk.setAttribute('aria-checked', c.checked ? 'true' : 'false');
+        on(chk, 'click', function () {
+          c.checked = !c.checked;
+          chk.setAttribute('aria-checked', c.checked ? 'true' : 'false');
+        });
+        item.appendChild(chk);
+        item.appendChild(el('div', 'imp-check-text', c.text));
+        checkList.appendChild(item);
+      });
+    }
+
+    /** @returns {number} how many items were actually added */
+    function appendChecklist() {
+      var picked = checkItems.filter(function (c) { return c.checked; });
+      if (!picked.length) return 0;
+      var proj = Store.project(p.id);
+      var seen = {};
+      (proj && proj.checklist ? proj.checklist : []).forEach(function (c) {
+        seen[String(c.text || '').trim().toLowerCase()] = true;
+      });
+      var added = 0;
+      picked.forEach(function (c) {
+        var key = c.text.trim().toLowerCase();
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        if (Store.addChecklistItem(p.id, c.text)) added++;
+      });
+      return added;
+    }
+
     function refresh() {
       buildRows();
       renderList();
+      buildChecks();
+      renderChecks();
     }
 
     function checkedSections() {
@@ -1915,18 +1999,168 @@
       return out;
     }
 
+    /* ---------------- PDF drop zone ---------------- */
+
+    function setZoneBusy(text, frac) {
+      reading = !!text;
+      zone.classList.toggle('busy', reading);
+      zone.disabled = reading;
+      zoneLabel.textContent = text || '';
+      zoneLabel.hidden = !text;
+      progress.hidden = !text;
+      progressFill.style.width = Math.round(Math.max(0, Math.min(1, frac || 0)) * 100) + '%';
+    }
+
+    function showResult(res) {
+      var bits = [plural(res.pages, 'page')];
+      if (res.columnsDetected) bits.push(plural(res.columnsDetected, 'column') + ' untangled');
+      bits.push(Number(res.chars).toLocaleString() + ' characters');
+      resultLine.textContent = 'Read ' + bits.join(' · ');
+      resultLine.hidden = false;
+    }
+
+    function readPdf(file) {
+      setZoneBusy('Reading page 1…', 0.02);
+      window.PdfText.extract(file, {
+        onProgress: function (page, total) {
+          setZoneBusy('Reading page ' + page + ' of ' + total + '…', total ? page / total : 0);
+        }
+      }).then(
+        function (res) {
+          setZoneBusy('', 0);
+          area.value = res.text;
+          showResult(res);
+          refresh();
+          announce('Read ' + plural(res.pages, 'page') + ' from the PDF.');
+        },
+        function (err) {
+          setZoneBusy('', 0);
+          toast((err && err.message) || 'Couldn’t read that PDF (it may be scanned images).', { ms: 4200 });
+        }
+      );
+    }
+
+    function takeFile(file) {
+      if (reading) return;
+      if (!file) return;
+      if (!isPdfFile(file)) {
+        toast('That isn’t a PDF');
+        return;
+      }
+      if (!window.PdfText || !window.PdfText.isAvailable()) {
+        toast('The PDF reader isn’t available. Paste the text instead.', { ms: 4200 });
+        return;
+      }
+      if (!area.value.trim()) {
+        readPdf(file);
+        return;
+      }
+      confirmSheet({
+        title: 'Replace the pattern text?',
+        message: 'Reading “' + (file.name || 'that PDF') + '” will replace what is in the box.',
+        confirmText: 'Replace'
+      }).then(function (ok) {
+        if (ok) readPdf(file);
+      });
+    }
+
+    function buildZone(body) {
+      var wrap = el('div', 'dz-wrap');
+
+      zone = button('dz', null, 'Choose a pattern PDF');
+      zone.setAttribute('data-tour', 'import-drop');
+      zone.appendChild(el('span', 'dz-icon', '📄'));
+      var line = el('span', 'dz-line');
+      line.appendChild(document.createTextNode('Drop a pattern PDF here, or '));
+      line.appendChild(el('span', 'dz-link', 'choose a file'));
+      zone.appendChild(line);
+      zoneLabel = el('span', 'dz-status');
+      zoneLabel.hidden = true;
+      zone.appendChild(zoneLabel);
+      progress = el('span', 'dz-bar');
+      progress.hidden = true;
+      progressFill = el('span', 'dz-bar-fill');
+      progress.appendChild(progressFill);
+      zone.appendChild(progress);
+
+      fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'application/pdf,.pdf';
+      fileInput.className = 'sr-only';
+      fileInput.setAttribute('data-import-file', '1');
+      fileInput.tabIndex = -1;
+      fileInput.setAttribute('aria-hidden', 'true');
+      on(fileInput, 'change', function () {
+        var f = firstFile(fileInput.files);
+        fileInput.value = '';
+        takeFile(f);
+      });
+
+      on(zone, 'click', function () {
+        if (!reading) fileInput.click();
+      });
+
+      function over(e) {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        zone.classList.add('over');
+      }
+      on(zone, 'dragenter', over);
+      on(zone, 'dragover', over);
+      on(zone, 'dragleave', function () { zone.classList.remove('over'); });
+      on(zone, 'drop', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove('over');
+        takeFile(firstFile(e.dataTransfer && e.dataTransfer.files));
+      });
+
+      // Anywhere else in the window, a dropped PDF would make the browser
+      // navigate away from the app. Swallow it while the sheet is open.
+      docGuard = function (e) {
+        e.preventDefault();
+        if (e.type === 'drop') zone.classList.remove('over');
+      };
+      document.addEventListener('dragover', docGuard);
+      document.addEventListener('drop', docGuard);
+
+      wrap.appendChild(zone);
+      wrap.appendChild(fileInput);
+      resultLine = el('p', 'dz-result muted');
+      resultLine.hidden = true;
+      wrap.appendChild(resultLine);
+      body.appendChild(wrap);
+    }
+
     openSheet({
       title: 'Import pattern',
+      cls: 'sheet-import',
       build: function (body) {
+        buildZone(body);
+
         area = textArea(initialText || '', 'mono', 'Paste the instructions from your PDF');
         area.setAttribute('aria-label', 'Pattern text to import');
         area.setAttribute('data-tour', 'import-text');
-        body.appendChild(field('Pattern text', area, 'Paste the instructions from your PDF.'));
+        body.appendChild(field('Pattern text', area, 'Drop the PDF above, or paste the instructions straight in.'));
         list = el('div', 'imp-list');
         list.setAttribute('data-tour', 'import-list');
         body.appendChild(field('Sections detected', list));
+
+        checkList = el('div', 'imp-list');
+        checkList.setAttribute('data-tour', 'import-checklist');
+        checkField = field('Checklist items found', checkList, 'Ticked items get added to the assembly checklist.');
+        checkField.hidden = true;
+        body.appendChild(checkField);
+
         on(area, 'input', debounce(refresh, 200));
         refresh();
+      },
+      onClose: function () {
+        if (docGuard) {
+          document.removeEventListener('dragover', docGuard);
+          document.removeEventListener('drop', docGuard);
+          docGuard = null;
+        }
       },
       footer: [
         {
@@ -1943,9 +2177,10 @@
               [{ name: activeName, makeCount: 1, text: area.value }],
               { mode: 'active', text: area.value }
             );
+            var extra = appendChecklist();
             api.close();
             render();
-            toast('Pattern saved into ' + activeName);
+            toast('Pattern saved into ' + activeName + checklistSuffix(extra), { ms: extra ? 3200 : 2600 });
           }
         },
         {
@@ -1959,24 +2194,28 @@
               return;
             }
             var res = Store.importPatternSections(p.id, secs, { mode: 'parts', text: area.value });
+            var extra = appendChecklist();
             api.close();
             render();
             var msg;
             if (res.created && res.updated) {
-              msg = 'Created ' + res.created + ' part' + (res.created === 1 ? '' : 's') +
-                ' · updated ' + res.updated;
+              msg = 'Created ' + plural(res.created, 'part') + ' · updated ' + res.updated;
             } else if (res.created) {
-              msg = 'Created ' + res.created + ' part' + (res.created === 1 ? '' : 's');
+              msg = 'Created ' + plural(res.created, 'part');
             } else if (res.updated) {
-              msg = 'Updated ' + res.updated + ' part' + (res.updated === 1 ? '' : 's');
+              msg = 'Updated ' + plural(res.updated, 'part');
             } else {
               msg = 'Nothing imported';
             }
-            toast(msg, { ms: 3200 });
+            toast(msg + checklistSuffix(extra), { ms: 3600 });
           }
         }
       ]
     });
+  }
+
+  function checklistSuffix(n) {
+    return n ? ' · + ' + plural(n, 'checklist item') : '';
   }
 
   /* ================================================================== *

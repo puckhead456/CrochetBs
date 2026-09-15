@@ -32,8 +32,24 @@
 <div id="summary"></div>
 
 <script src="../js/patterns.js"></script>
+<script src="../js/vendor/pdf.min.js"></script>
+<script src="../js/pdftext.js"></script>
 <script>
 'use strict';
+
+// pdftext.js points the worker at './js/vendor/...', which is right for the
+// app at the repo root but wrong from /test/. Pin it from here.
+(function () {
+  if (!window.pdfjsLib || !window.pdfjsLib.GlobalWorkerOptions) return;
+  var src = '../js/vendor/pdf.worker.min.js';
+  try {
+    Object.defineProperty(window.pdfjsLib.GlobalWorkerOptions, 'workerSrc', {
+      get: function () { return src; },
+      set: function () { /* ignore pdftext's page-relative path */ },
+      configurable: true
+    });
+  } catch (e) { window.pdfjsLib.GlobalWorkerOptions.workerSrc = src; }
+})();
 
 var P = window.Patterns;
 var out = document.getElementById('out');
@@ -143,11 +159,7 @@ function get(name) {
   return fetch('../tmp-pdf/' + name).then(function (r) { return r.text(); });
 }
 
-Promise.all([get('bee.txt'), get('cardigan.txt'), get('bear.txt'), get('cato.txt')]).then(function (res) {
-  out.textContent = '';
-  try { run(res[0], res[1]); runBear(res[2]); runCato(res[3]); consistency(res[2], res[3]); } catch (e) {
-    log(false, 'fixture run threw: ' + (e && e.stack ? e.stack : e));
-  }
+function finish() {
   if (uncomputed.length) {
     var u = document.getElementById('uncomputed');
     u.appendChild(el('h2', null, 'Row/setup lines with NO count (' + uncomputed.length + ')'));
@@ -157,11 +169,81 @@ Promise.all([get('bee.txt'), get('cardigan.txt'), get('bear.txt'), get('cato.txt
   sEl.textContent = passed + ' passed, ' + failed + ' failed';
   sEl.className = failed === 0 ? 'ok' : 'bad';
   console.log(passed + ' passed, ' + failed + ' failed');
+  window.__done = true;
+}
+
+Promise.all([get('bee.txt'), get('cardigan.txt'), get('bear.txt'), get('cato.txt')]).then(function (res) {
+  out.textContent = '';
+  try { run(res[0], res[1]); runBear(res[2]); runCato(res[3]); consistency(res[2], res[3]); } catch (e) {
+    log(false, 'fixture run threw: ' + (e && e.stack ? e.stack : e));
+  }
+  return runPdfs();
 }, function (err) {
-  out.textContent = 'Could not load ../tmp-pdf fixtures: ' + err;
-  document.getElementById('summary').textContent = '0 passed, 1 failed';
-  document.getElementById('summary').className = 'bad';
+  log(false, 'could not load the ../tmp-pdf text fixtures: ' + err);
+  return runPdfs();
+}).then(finish, function (e) {
+  log(false, 'pdf run threw: ' + (e && e.stack ? e.stack : e));
+  finish();
 });
+
+// ------------------------------------------------- the real PDFs, in-app
+// Same path a user takes: PdfText.extract(file) -> Patterns.splitSections.
+
+var PDF_EXPECT = {
+  'bear.pdf': ['Head/1/13', 'Body/1/10', 'First Leg/1/5', 'Second Leg/1/1', 'Arms/2/6', 'Ears/2/3'],
+  'cato.pdf': ['Head/1/18', 'Ears/2/11', 'Horns/2/8', 'Tail & Body/1/37', 'Arms/2/17', 'Feet/2/6', 'Wings/2/7']
+};
+
+function runPdfs() {
+  h('h2', 'REAL PDFs (PdfText.extract -> Patterns)');
+  if (!window.PdfText || !window.pdfjsLib) {
+    log(false, 'pdf.js + pdftext.js loaded');
+    return Promise.resolve();
+  }
+  var names = ['bee.pdf', 'cardigan.pdf', 'bear.pdf', 'cato.pdf'];
+  var chain = Promise.resolve();
+  names.forEach(function (name) {
+    chain = chain.then(function () {
+      return fetch('../tmp-pdf/' + name)
+        .then(function (r) { return r.blob(); })
+        .then(function (blob) { return window.PdfText.extract(blob); })
+        .then(function (res) { checkPdf(name, res); })
+        .catch(function (e) { log(false, name + ': extract failed - ' + (e && e.message ? e.message : e)); });
+    });
+  });
+  return chain;
+}
+
+function checkPdf(name, res) {
+  var secs = P.splitSections(res.text);
+  var shape = secShape(secs);
+  h('h3', name + ' - ' + res.pages + ' pages, ' + res.chars + ' chars, ' +
+    res.columnsDetected + ' two-column pages -> ' + JSON.stringify(shape));
+  window.__pdfText = window.__pdfText || {};
+  window.__pdfText[name] = res.text;
+
+  if (PDF_EXPECT[name]) {
+    eq(shape, PDF_EXPECT[name], name + ': section list from the real PDF');
+  }
+  if (name === 'bee.pdf') {
+    eq(names(secs), ['Body', 'Wings', 'Body', 'Wings', 'Body', 'Wings'], 'bee.pdf: Body/Wings three times, nothing else');
+  }
+  if (name === 'cato.pdf') {
+    eq(shape.indexOf('Head/1/18'), 0, 'cato.pdf: Head is the FIRST section (no terminology stubs before it)');
+  }
+  if (name === 'cardigan.pdf') {
+    var nm = names(secs);
+    ['First Section', 'Center Back', 'Second Section', 'Sleeves', 'Sleeve Cuff', 'Front Trim'].forEach(function (want) {
+      log(nm.indexOf(want) >= 0, 'cardigan.pdf: section "' + want + '" detected', JSON.stringify(nm));
+    });
+    var fs = sectionNamed(secs, 'First Section');
+    eq(fs ? P.summary(P.parse(fs.text)).rows : null, 8, 'cardigan.pdf: First Section has 8 rows');
+    var sizes = P.detectSizes(res.text);
+    eq(sizes ? sizes.length : 0, 9, 'cardigan.pdf: detectSizes finds 9 sizes');
+  }
+  // every section the parser offers as a part should have real rows
+  log(secs.every(function (s) { return P.summary(P.parse(s.text)).rows > 0; }), name + ': every section has rows');
+}
 
 // strip the "=== PAGE n ===" scaffolding lines the fixture files carry
 function clean(text) {

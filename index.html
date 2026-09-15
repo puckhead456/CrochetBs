@@ -47,6 +47,7 @@
       <h2>No projects yet</h2>
       <p class="muted">Start a blanket, a blobby sheep, or a whole dragon. Ready or not, we keep the count.</p>
       <button type="button" class="btn primary big" data-action="new-project">＋ New project</button>
+      <p class="pdf-hint">Have a pattern PDF? Create the project, then use menu → Import pattern to drop it in.</p>
 
       <div id="welcome-card" class="welcome-card" hidden>
         <div class="welcome-title">New here?</div>
@@ -165,6 +166,8 @@
 <!-- Scripts (order matters) -->
 <script src="./js/themes.js"></script>
 <script src="./js/patterns.js"></script>
+<!-- pdf.js itself is NOT loaded here: PdfText pulls it in on first use. -->
+<script src="./js/pdftext.js"></script>
 <script src="./js/celebrate.js"></script>
 <script src="./js/audio.js"></script>
 <script src="./js/store.js"></script>

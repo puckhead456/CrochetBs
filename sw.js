@@ -2,7 +2,7 @@
 
 /* Stitchkeeper service worker.
    Bump CACHE_VERSION whenever any precached file changes. */
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const CACHE_NAME = 'stitchkeeper-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -13,6 +13,10 @@ const PRECACHE_URLS = [
   './css/themes.css',
   './js/themes.js',
   './js/patterns.js',
+  './js/pdftext.js',
+  // pdf.js is lazy-loaded by PdfText, but precached so PDF import works offline.
+  './js/vendor/pdf.min.js',
+  './js/vendor/pdf.worker.min.js',
   './js/celebrate.js',
   './js/audio.js',
   './js/store.js',
@@ -29,14 +33,15 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      // Add each file individually so one missing file doesn't fail the whole install.
-      await Promise.all(
-        PRECACHE_URLS.map((url) =>
-          cache.add(url).catch((err) => {
-            console.warn('[sw] precache failed for', url, err);
-          })
-        )
-      );
+      // One at a time, and each in its own try: a single missing (or slow —
+      // pdf.worker.min.js is a megabyte) file must not fail the whole install.
+      for (const url of PRECACHE_URLS) {
+        try {
+          await cache.add(url);
+        } catch (err) {
+          console.warn('[sw] precache failed for', url, err);
+        }
+      }
       await self.skipWaiting();
     })()
   );

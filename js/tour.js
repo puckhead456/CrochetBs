@@ -868,7 +868,7 @@
       steps: function () {
         return [
           {
-            target: '[data-tour="import-text"]',
+            target: '[data-tour="import-drop"]',
             before: function (c) {
               var cl = app('closeAllSheets');
               if (cl) cl();
@@ -877,9 +877,16 @@
               if (open && p) open(p.id, '');
               return wait(60);
             },
+            title: 'Start with the PDF',
+            body:
+              'Drop the PDF from your pattern shop right here, or paste text below. It is read on ' +
+              'your own device — nothing is uploaded anywhere.'
+          },
+          {
+            target: '[data-tour="import-text"]',
             title: 'Paste it straight in',
             body:
-              'Copy the instructions out of your pattern PDF and drop them in this box. ' +
+              'No PDF? Copy the instructions out of your pattern and drop them in this box. ' +
               'Two-column bleed, stray photo labels and the odd typo are all fine.'
           },
           {

@@ -596,11 +596,38 @@
   function nameRowInfo(t) {
     var m = NAME_ROW_RE.exec(t);
     if (!m) return null;
+    // Abbreviation glossary rows ("Slst: Slip Stitch", "Inc: Sc Increase")
+    // look exactly like a one-line part, so rule them out: a short name, a
+    // short expansion and not a number in sight.
+    if (m[1].trim().length <= 5 && m[2].length < 40 && !/\d/.test(m[2])) return null;
     var h = headerInfo(m[1] + ':');
     if (!h || h === 'note') return null;
     if (!INSTR_START_RE.test(m[2])) return null;
     return { name: h.name, makeCount: h.makeCount, rest: m[2], prefixLen: t.length - m[2].length };
   }
+
+  // A running head ("WHEAT STITCH CROCHET CARDIGAN" on every page) reads like
+  // a section header, so collect the repeats up front and refuse to name a
+  // section after one. Short repeated names (BODY, WINGS) are real parts.
+  function findRunningHeads(raws) {
+    var counts = {}, firsts = {}, pageStart = true, i, t, key;
+    for (i = 0; i < raws.length; i++) {
+      t = trimLine(raws[i]);
+      if (/^===\s*page\b/i.test(t)) { pageStart = true; continue; }
+      if (!t) continue;
+      key = t.toLowerCase().replace(/\s+/g, ' ');
+      counts[key] = (counts[key] || 0) + 1;
+      if (pageStart) { firsts[key] = (firsts[key] || 0) + 1; pageStart = false; }
+    }
+    var heads = {};
+    Object.keys(counts).forEach(function (k) {
+      var wordy = k.split(' ').length >= 3 || k.length >= 18;
+      if ((firsts[k] || 0) >= 2 || (counts[k] >= 2 && wordy)) heads[k] = true;
+    });
+    return heads;
+  }
+
+  function headKey(t) { return t.toLowerCase().replace(/\s+/g, ' '); }
 
   var NOTE_KEY_RE = /^(?:colou?r\s+change|invisible\s+colou?r\s+change|change\b|switch\b|add\b|stuff\b|start\b|begin\b|tie\s+off|fasten\b|fo\b|sl\s*st|slst|join\b|place\b|insert\b|attach\b|sew\b|embroider\b|do\s*not\b|don'?t\b|put\b|with\b|cut\b|leave\b|leaving\b|finish\b|close\b|before\b|after\b|now\b|next\b|make\s+sure|mark\b|pinch\b|fold\b|work\b|continue\b|optional\b|using\b|in\s+colou?r\b|with\s+colou?r\b|in\s+(?:yellow|black|white|grey|gray|brown|pink|red|blue|green|mc|cc)\s*[.,]?\s*$|in\s+(?:colou?r\s+)?[a-z][a-z]*\s*[:.]?\s*$)/i;
 
@@ -652,6 +679,9 @@
   // 8. parse() and friends
   // =====================================================================
 
+  // Does a row line actually carry crochet instructions?
+  var INSTR_ROW_RE = new RegExp('\\b(?:' + STITCH_ALT + '|ch(?:ain)?|mr|magic|turn|join|work)\\b', 'i');
+
   function makeLine(i, raw) {
     return {
       index: i, text: raw, kind: 'note',
@@ -695,7 +725,7 @@
     return out;
   }
 
-  function classify(t, size) {
+  function classify(t, size, heads) {
     if (!t) return { blank: true };
     if (isPhotoLabel(t)) return { photo: true };
     var mk = detectMarker(t);
@@ -709,6 +739,7 @@
     var nr = nameRowInfo(t);
     if (nr) return { nameRow: nr };
     if (COLOUR_NOTE_RE.test(t)) return { note: true };   // "In Twilight :"
+    if (heads && heads[headKey(t)]) return { note: true };  // running head
     var h = headerInfo(t);
     if (h && h !== 'note') return { header: h };
     return { note: true };
@@ -730,6 +761,7 @@
     if (text === null || text === undefined) return [];
     var size = (opts && typeof opts.size === 'number') ? opts.size : 0;
     var raws = prepareLines(text);
+    var heads = findRunningHeads(raws);
     var lines = [];
     var sections = [];
     var consumed = [];
@@ -742,7 +774,8 @@
       var sec = {
         index: sections.length, name: name || '', makeCount: makeCount || 1,
         startLine: startLine, endLine: startLine, rows: 0, maxRow: null,
-        lastRow: null, lastRowLine: null, prevCount: null, hasRow: false
+        lastRow: null, lastRowLine: null, prevCount: null, hasRow: false,
+        instrRows: 0
       };
       sections.push(sec);
       return sec;
@@ -803,7 +836,7 @@
       if (consumed[i]) { L.consumed = true; continue; }
       if (!t) continue;
 
-      var cls = classify(t, size);
+      var cls = classify(t, size, heads);
       var prefixLen = 0;
       var isRow = false, isSetup = false;
 
@@ -811,13 +844,16 @@
 
       if (cls.header) {
         L.kind = 'header';
-        if (!cur.hasRow && !cur.name) {
-          cur.name = cls.header.name;
-          cur.makeCount = cls.header.makeCount;
-          if (i < cur.startLine) cur.startLine = i;
-          pushHeader(cls.header, i, true);
-        } else {
-          pushHeader(cls.header, i, false);
+        pushHeader(cls.header, i, false);
+        // A section that has not started yet takes its name from the newest
+        // header group, so the header closest before the first row wins over
+        // a cover title or a chapter heading further up.
+        if (!cur.hasRow) {
+          var first = group.entries[0];
+          cur.name = first.name;
+          cur.makeCount = first.makeCount;
+          cur.startLine = first.line;
+          first.used = true;
         }
         continue;
       }
@@ -860,7 +896,7 @@
         while (guard < 3 && j2 < raws.length) {
           if (!/,\s*$/.test(t) && findExplicit(t.slice(prefixLen))) break;
           var ct = trimLine(raws[j2]);
-          if (!looksLikeContinuation(ct, classify(ct, size))) break;
+          if (!looksLikeContinuation(ct, classify(ct, size, heads))) break;
           t = t.replace(/\s+$/, '') + ' ' + ct;
           consumed[j2] = true;
           lastIdx = j2;
@@ -910,6 +946,8 @@
         if (L.count !== null) cur.prevCount = L.count;
         if (isRow) {
           cur.hasRow = true;
+          // a section needs real instructions, not just numbered lines
+          if (INSTR_ROW_RE.test(instr)) cur.instrRows += 1;
           cur.lastRow = L.rowEnd;
           cur.lastRowLine = i;
           cur.rows += (L.rowEnd - L.row + 1);
@@ -959,7 +997,8 @@
       sections: sections.map(function (s) {
         return {
           index: s.index, name: s.name, makeCount: s.makeCount,
-          startLine: s.startLine, endLine: s.endLine, rows: s.rows, maxRow: s.maxRow
+          startLine: s.startLine, endLine: s.endLine, rows: s.rows,
+          maxRow: s.maxRow, instrRows: s.instrRows
         };
       }),
       sizes: detectSizes(text),
@@ -968,6 +1007,12 @@
       anySuggestion: suggestion
     };
     return lines;
+  }
+
+  // A section worth offering as a part: it has rows, and at least one of them
+  // is a real instruction rather than a bare number or a glossary line.
+  function isRealSection(s) {
+    return s.rows > 0 && (s.instrRows === undefined || s.instrRows > 0);
   }
 
   function inRange(line, row) {
@@ -1020,7 +1065,7 @@
         if (l.computed !== null && l.computed !== undefined) anyComputed = true;
       }
     }
-    var secs = meta ? meta.sections.filter(function (s) { return s.rows > 0; }) : [];
+    var secs = meta ? meta.sections.filter(isRealSection) : [];
     if (meta && !secs.length && meta.sections.length) secs = [meta.sections[0]];
     var sug = meta && meta.suggestion ? meta.suggestion : null;
     return {
@@ -1044,11 +1089,12 @@
     var secs = lines.meta ? lines.meta.sections : [];
     // Build each section's text from the lines that belong to it: with
     // two-column bleed the sections interleave, so a raw slice would not do.
-    var out = secs.filter(function (s) { return s.rows > 0; }).map(function (s) {
+    var out = secs.filter(isRealSection).map(function (s) {
       var body = [];
       for (var i = 0; i < lines.length; i++) {
         var l = lines[i];
         if (l.section !== s.index || l.consumed || l.photo) continue;
+        if (l.index < s.startLine) continue;
         if (!trimLine(l.text)) continue;
         body.push(trimLine(l.text));
       }
