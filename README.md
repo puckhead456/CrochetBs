@@ -5,7 +5,7 @@ stitches, repeats, pattern text, assembly checklists, and progress across
 multiple parts of a project. It's an installable web app (PWA) that works
 offline, with six built-in themes.
 
-Live app: **https://puckhead456.github.io/CrochetBs/**
+Live app: **https://puckhead456.github.io/ThreadyOrNot/**
 
 ## Install it on your phone
 
