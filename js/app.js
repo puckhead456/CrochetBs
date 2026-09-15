@@ -2656,16 +2656,34 @@
     if (!tourAvailable()) return;
     var ctx = {};
     window.Tour.start('home', { ctx: ctx })
-      .then(function () {
-        return window.Tour.start('counter', { ctx: ctx, sampleOffer: false });
+      .then(function (res) {
+        // Skipping the home tour ends the chain — no silent jump onwards.
+        if (!res || res.reason !== 'done') return false;
+        return window.Tour.prompt({
+          title: 'Next: counting a project',
+          body: 'We’ll make a sample sheep project so you can try the counter. ' +
+            'You can delete it at the end.',
+          confirmText: 'Show me',
+          cancelText: 'Not now'
+        });
       })
-      .then(function () {
-        if (!Store.projects().length) return null;
-        return confirmSheet({
-          title: 'One more?',
-          message: 'Most patterns come as a PDF. Want the 30-second tour of pasting one in?',
-          cancelText: 'Not now',
-          confirmText: 'Show me'
+      .then(function (go) {
+        if (!go) {
+          window.Tour.markSeen('home');
+          return false;
+        }
+        return window.Tour.start('counter', { ctx: ctx, sampleOffer: false }).then(function () {
+          return true;
+        });
+      })
+      .then(function (went) {
+        if (!went || !Store.projects().length) return null;
+        return window.Tour.prompt({
+          title: 'One more: importing a pattern',
+          body: 'Most patterns arrive as a PDF. Paste one in and we’ll pick out the parts — ' +
+            'it takes about thirty seconds.',
+          confirmText: 'Show me',
+          cancelText: 'Not now'
         }).then(function (ok) {
           return ok ? window.Tour.start('import', { ctx: ctx }) : null;
         });

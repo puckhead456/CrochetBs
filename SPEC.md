@@ -31,7 +31,7 @@ icons/icon-192.png, icons/icon-512.png, icons/apple-touch-icon.png, icons/icon.s
 State = {
   version: 1,
   settings: {
-    theme: 'stardew-spring',        // one of the 6 theme ids
+    theme: 'stardew-night',         // one of the 6 theme ids (Stardrop Night is the default for new installs)
     haptics: true,
     sounds: true,
     keepAwake: false,               // screen wake lock preference

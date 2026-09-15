@@ -210,6 +210,7 @@
       body: body,
       tryIt: tryIt,
       extra: extra,
+      foot: foot,
       skip: skip,
       back: back,
       next: next
@@ -384,14 +385,69 @@
     return typeof v === 'function' ? v(ctx) : v;
   }
 
+  /* ---- Step plan: which steps will actually be shown, and their numbers ---- *
+   * Built once at the start (after the first `before` hook has run) and
+   * trimmed if a step turns out to be missing after all, so the counter never
+   * shows a gap like "1 of 4" → "3 of 4".
+   * ------------------------------------------------------------------------ */
+
+  function buildPlan(steps, ctx) {
+    var plan = [];
+    var unknown = false;
+    for (var i = 0; i < steps.length; i++) {
+      var s = steps[i];
+      // A `when` predicate answers for steps we cannot probe yet (their target
+      // only appears once an earlier `before` has opened something).
+      if (s.when && !s.when(ctx)) continue;
+      // Any later `before` hook rearranges the page, so from there on we
+      // cannot tell by looking — assume those steps will show.
+      if (i > 0 && s.before) unknown = true;
+      if (unknown || !s.target || s.fallback) {
+        plan.push(i);
+      } else if (resolveTarget(s)) {
+        plan.push(i);
+      }
+    }
+    return plan;
+  }
+
+  function planIndex(i) {
+    var plan = run.plan;
+    if (plan.indexOf(i) === -1) {
+      // A step we wrote off has turned up after all — slot it back in.
+      var at = 0;
+      while (at < plan.length && plan[at] < i) at++;
+      plan.splice(at, 0, i);
+    }
+    return plan.indexOf(i);
+  }
+
+  function dropFromPlan(i) {
+    var at = run.plan.indexOf(i);
+    if (at >= 0) run.plan.splice(at, 1);
+  }
+
+  function isLastStep(i) {
+    return !run.plan.length || run.plan[run.plan.length - 1] === i;
+  }
+
+  function isFirstStep(i) {
+    return !run.plan.length || run.plan[0] === i;
+  }
+
   function renderCard(step, node) {
     var ctx = run.ctx;
-    var tryIt = resolveField(step.tryIt, ctx);
+    // A `fallback: 'center'` step with no target gets its own copy, explaining
+    // what will appear there once the user has something to see.
+    var centred = !node && step.fallback === 'center';
+    var tryIt = centred ? null : resolveField(step.tryIt, ctx);
     var actions = resolveField(step.actions, ctx) || [];
 
-    ui.counter.textContent = (run.index + 1) + ' of ' + run.steps.length;
-    ui.title.textContent = resolveField(step.title, ctx) || '';
-    ui.body.textContent = resolveField(step.body, ctx) || '';
+    var pos = planIndex(run.index) + 1;
+    ui.counter.hidden = !!step.bare;
+    ui.counter.textContent = pos + ' of ' + run.plan.length;
+    ui.title.textContent = resolveField(centred && step.fallbackTitle ? step.fallbackTitle : step.title, ctx) || '';
+    ui.body.textContent = resolveField(centred && step.fallbackBody ? step.fallbackBody : step.body, ctx) || '';
     ui.tryIt.hidden = !tryIt;
     ui.tryIt.textContent = tryIt ? 'Try it: ' + tryIt : '';
 
@@ -407,8 +463,9 @@
       ui.extra.appendChild(b);
     });
 
-    ui.back.disabled = run.index === 0;
-    ui.next.textContent = run.index === run.steps.length - 1 ? 'Done' : 'Next';
+    ui.foot.hidden = !!step.bare;
+    ui.back.disabled = isFirstStep(run.index);
+    ui.next.textContent = isLastStep(run.index) ? 'Done' : 'Next';
     ui.card.classList.toggle('no-target', !node);
   }
 
@@ -423,14 +480,17 @@
 
     run.index = i;
     var step = run.steps[i];
+    // The plan pass already ran the first step's `before`; don't repeat it.
+    var skipBefore = run.skipBeforeFor === i;
+    run.skipBeforeFor = -1;
 
     // A `before` hook moves the page around (opens a sheet, switches screen),
     // so park the overlay until the new step is measured and rendered.
-    if (step.before && ui) ui.root.style.visibility = 'hidden';
+    if (step.before && !skipBefore && ui) ui.root.style.visibility = 'hidden';
 
     return Promise.resolve()
       .then(function () {
-        return step.before ? step.before(run.ctx) : null;
+        return step.before && !skipBefore ? step.before(run.ctx) : null;
       })
       .then(function () {
         if (run && run.token !== token) return null;
@@ -439,11 +499,14 @@
       .then(function () {
         if (!run || run.token !== token) return null;
         ensureUI();
-        var node = resolveTarget(step);
-        if (!node && step.target) {
-          // Missing target → keep walking in the same direction.
+        var node = step.when && !step.when(run.ctx) ? null : resolveTarget(step);
+        if (!node && (step.target || step.when) && step.fallback !== 'center') {
+          // Missing target and nothing to fall back on → keep walking, and
+          // take the step out of the plan so the numbering stays gapless.
+          dropFromPlan(i);
           var nextIndex = i + (dir < 0 ? -1 : 1);
           if (nextIndex < 0) return show(0, 1);
+          if (nextIndex >= run.steps.length) return finish('done');
           return show(nextIndex, dir);
         }
         run.node = node;
@@ -475,6 +538,10 @@
 
   function go(delta) {
     if (!run) return;
+    if (delta > 0 && isLastStep(run.index)) {
+      finish('done');
+      return;
+    }
     var next = run.index + delta;
     if (next >= run.steps.length) {
       finish('done');
@@ -490,7 +557,7 @@
     run = null;
     unbindGlobals();
     destroyUI();
-    if (reason === 'done') markSeen(r.id);
+    if (reason === 'done' && TOURS[r.id]) markSeen(r.id);
     var result = { id: r.id, reason: reason, ctx: r.ctx };
     try {
       if (r.opts && typeof r.opts.onDone === 'function') r.opts.onDone(result);
@@ -618,6 +685,29 @@
    * 7. Tour definitions
    * ================================================================== */
 
+  /** The project the checklist steps would act on, if there is one. */
+  function someProject() {
+    try {
+      return openProject() || window.Store.projects()[0] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function hasProject() {
+    return !!someProject();
+  }
+
+  /** True when that project still has a template to reload its checklist from. */
+  function hasProjectTemplate() {
+    var p = someProject();
+    try {
+      return !!(p && p.templateId && window.Store.template(p.templateId));
+    } catch (e) {
+      return false;
+    }
+  }
+
   function goHomeScreen() {
     if (openProject()) {
       window.Store.setActiveProject(null);
@@ -642,10 +732,15 @@
           },
           {
             target: '#home-list .project-card',
+            fallback: 'center',
             title: 'Your projects',
             body:
               'Each card shows the part you are on, the row you are on and the stitches so far. ' +
-              'Tap one to pick up exactly where you left off.'
+              'Tap one to pick up exactly where you left off.',
+            fallbackTitle: 'Your projects',
+            fallbackBody:
+              'Once you start a project it shows up here as a card with the part, round and stitch ' +
+              'you are on. Tap it to open.'
           },
           {
             target: '#btn-settings',
@@ -656,9 +751,14 @@
           },
           {
             target: '#home-finished',
+            fallback: 'center',
             title: 'The finished shelf',
             body:
               'Mark a project Finished or Frogged and it tucks itself away down here. ' +
+              'Paused ones stay up top, still counting.',
+            fallbackTitle: 'The finished shelf',
+            fallbackBody:
+              'Finished and frogged projects move to a shelf down here so the list stays tidy. ' +
               'Paused ones stay up top, still counting.'
           }
         ];
@@ -843,6 +943,7 @@
           },
           {
             target: '[data-tour="checklist-list"]',
+            when: hasProject,
             before: function () {
               var cl = app('closeAllSheets');
               if (cl) cl();
@@ -866,6 +967,7 @@
           },
           {
             target: '[data-tour="checklist-reload"]',
+            when: hasProjectTemplate,
             title: 'Reload from the template',
             body:
               'Improved the template later on? This pulls the fresh list in. It replaces what is here, ' +
@@ -895,17 +997,57 @@
    * 8. Public API
    * ================================================================== */
 
+  function runSteps(id, steps, opts, ctx) {
+    if (run) finish('stopped');
+    return new Promise(function (resolve) {
+      run = {
+        id: id,
+        steps: steps,
+        index: 0,
+        plan: steps.map(function (s, i) { return i; }),
+        skipBeforeFor: -1,
+        ctx: ctx,
+        opts: opts,
+        after: opts.after || null,
+        node: null,
+        token: 0,
+        resolve: resolve
+      };
+      var r = run;
+      ensureUI();
+      // The card still holds the last tour's text until the first step renders.
+      ui.root.style.visibility = 'hidden';
+      bindGlobals();
+
+      // Run the opening `before` first, then work out which steps will really
+      // show — so the counter reads "1 of 4 … 4 of 4" with no gaps.
+      Promise.resolve()
+        .then(function () {
+          return steps[0].before ? steps[0].before(ctx) : null;
+        })
+        .then(frame)
+        .then(function () {
+          if (run !== r) return;
+          run.plan = buildPlan(steps, ctx);
+          if (!run.plan.length) run.plan = [0];
+          run.skipBeforeFor = 0;
+          show(0, 1);
+        })
+        .catch(function () {
+          if (run === r) show(0, 1);
+        });
+    });
+  }
+
   /**
    * @param {string} id
-   * @param {{ onDone?:Function, sampleOffer?:boolean, after?:Function }} [opts]
+   * @param {{ onDone?:Function, sampleOffer?:boolean, after?:Function, ctx?:Object }} [opts]
    * @returns {Promise<{id:string, reason:string, ctx:Object}>}
    */
   function start(id, opts) {
     opts = opts || {};
     var def = TOURS[id];
     if (!def) return Promise.resolve({ id: id, reason: 'unknown', ctx: {} });
-
-    if (run) finish('stopped');
 
     var ctx = opts.ctx || {};
     var steps;
@@ -915,24 +1057,39 @@
       steps = [];
     }
     if (!steps.length) return Promise.resolve({ id: id, reason: 'empty', ctx: ctx });
+    return runSteps(id, steps, opts, ctx);
+  }
 
+  /**
+   * A single centred card with two choices, in the same spotlight chrome —
+   * used to hand off between tours instead of jumping silently.
+   * @param {{title:string, body:string, confirmText?:string, cancelText?:string}} o
+   * @returns {Promise<boolean>}
+   */
+  function prompt(o) {
+    o = o || {};
     return new Promise(function (resolve) {
-      run = {
-        id: id,
-        steps: steps,
-        index: 0,
-        ctx: ctx,
-        opts: opts,
-        after: opts.after || null,
-        node: null,
-        token: 0,
-        resolve: resolve
-      };
-      ensureUI();
-      // The card still holds the last tour's text until the first step renders.
-      ui.root.style.visibility = 'hidden';
-      bindGlobals();
-      show(0, 1);
+      var answered = false;
+      function answer(v) {
+        if (answered) return;
+        answered = true;
+        resolve(v);
+      }
+      runSteps(
+        '__prompt',
+        [{
+          target: null,
+          bare: true,
+          title: o.title,
+          body: o.body,
+          actions: [
+            { text: o.confirmText || 'Show me', cls: 'primary block', run: function () { answer(true); } },
+            { text: o.cancelText || 'Not now', cls: 'block', run: function () { answer(false); } }
+          ]
+        }],
+        { onDone: function () { answer(false); } },
+        {}
+      );
     });
   }
 
@@ -945,6 +1102,7 @@
 
   window.Tour = {
     start: start,
+    prompt: prompt,
     stop: stop,
     list: list,
     hasSeen: hasSeen,
